@@ -1,6 +1,6 @@
 #solution files
 ACAL/ACAL.VC.VC.opendb
-
+ACAL/ACAL/*.*db
 # Windows image file caches
 Thumbs.db
 ehthumbs.db

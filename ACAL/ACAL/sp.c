@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/types.h> 
@@ -23,6 +24,24 @@ typedef enum {
 	inst_params_dst_shift = 22,       // 00000001110000000000000000000000
 	inst_params_opcode_shift = 25     // 00111110000000000000000000000000
 }inst_params_shift;
+
+//DMA hardware
+int dma_regs[5]; //registers serving the DMA functionality
+bool read_into_reg3 = true;	//if false, read into reg4
+bool write_reg3 = true;  //if false, write reg4's data
+bool dma_opcode_received = false;
+
+// 3 bit control state machine of DMA
+int ctl_dma_state;
+
+// control states
+#define NO_READ_WRITE		0
+#define ONE_READ_NO_WRITE	1
+#define ONE_READ_ONE_WRITE	2
+#define TWO_WRITE_READY		3
+#define ONE_WRITE_READY		4
+#define DMA_IDLE_STATE		5
+
 
 #define NUM_OF_REGS (8)
 #define MAX_STR_LEN (1024)
@@ -134,6 +153,8 @@ static void sp_reset(sp_t *sp)
 #define JEQ 18
 #define JNE 19
 #define JIN 20
+#define DMA 21
+#define POL 22
 #define HLT 24
 
 static char opcode_name[32][4] = {"ADD", "SUB", "LSF", "RSF", "AND", "OR", "XOR", "LHI",
@@ -155,6 +176,7 @@ static void dump_sram(sp_t *sp)
 		fprintf(fp, "%08x\n", llsim_mem_extract(sp->sram, i, 31, 0));
 	fclose(fp);
 }
+
 
 static void sp_ctl(sp_t *sp)
 {
@@ -218,27 +240,32 @@ static void sp_ctl(sp_t *sp)
 		break;
 
 	case CTL_STATE_DEC1:
-		//Trace lines 2,3,4 in inst_trace, inst is decoded and ready
-		print_line2(inst_trace_fp, sp->spro);
-		print_line3(inst_trace_fp, sp->spro);
-		print_line4(inst_trace_fp, sp->spro);
-
-		if (spro->src0 == 1)
+		if (sprn->opcode != DMA)
 		{
-			sprn->alu0 = spro->immediate;
+			print_line2(inst_trace_fp, sp->spro);
+			print_line3(inst_trace_fp, sp->spro);
+			print_line4(inst_trace_fp, sp->spro);
+			if (spro->src0 == 1)
+			{
+				sprn->alu0 = spro->immediate;
+			}
+			else
+			{
+				sprn->alu0 = spro->r[spro->src0];
+			}
+
+			if (spro->src1 == 1)
+			{
+				sprn->alu1 = spro->immediate;
+			}
+			else
+			{
+				sprn->alu1 = spro->r[spro->src1];
+			}
 		}
 		else
 		{
-			sprn->alu0 = spro->r[spro->src0];
-		}
-
-		if (spro->src1 == 1)
-		{
-			sprn->alu1 = spro->immediate;
-		}
-		else
-		{
-			sprn->alu1 = spro->r[spro->src1];
+			init_dma_logic(spro->r[spro->src0], spro->r[spro->src1], spro->immediate);
 		}
 
 		sprn->ctl_state = CTL_STATE_EXEC0; 
@@ -499,6 +526,165 @@ void sp_init(char *program_name)
 	sp_register_all_registers(sp);
 }
 
+void init_dma_logic(int source, int dest, int amount)	//TODO add registers to cycle trace
+{
+	dma_regs[0] = source;
+	dma_regs[1] = dest;
+	dma_regs[2] = amount;
+}
+/*
+TODO:
+how to finish - delete regs values and switch to idle
+
+decisions:
+read_into_reg3 is switched once value is inserted into reg itself (not at start of loading
+amount decreases only once value is inserted to register from loading
+*/
+
+void perform_dma_logic(bool mem_available, sp_t *sp)
+{
+	switch (ctl_dma_state)
+	{
+	case(NO_READ_WRITE):
+		if (dma_regs[2] == 0)
+		{
+			dma_opcode_received = false;
+			ctl_dma_state = DMA_IDLE_STATE;
+		}
+
+		else if (mem_available)
+		{
+			llsim_mem_read(sp->sram, dma_regs[0]);
+			dma_regs[0]++;
+			ctl_dma_state = ONE_READ_NO_WRITE;
+		}
+		else
+		{
+			ctl_dma_state = NO_READ_WRITE;
+		}
+		break;
+
+	case(ONE_READ_NO_WRITE):
+		if (read_into_reg3)
+		{
+			dma_regs[3] = llsim_mem_extract_dataout(sp->sram, dma_regs[0], 31, 0);
+		}
+		else
+		{
+			dma_regs[4] = llsim_mem_extract_dataout(sp->sram, dma_regs[0], 31, 0);
+		}
+		read_into_reg3 = !read_into_reg3; //next, data will be loaded to other register
+		dma_regs[2]--;
+
+		if (dma_regs[2] == 0)
+		{
+			ctl_dma_state = ONE_WRITE_READY;
+		}
+		else if (mem_available)
+		{
+			llsim_mem_read(sp->sram, dma_regs[0]);
+			dma_regs[0]++;
+			ctl_dma_state = ONE_READ_ONE_WRITE;
+		}
+		else
+		{
+			ctl_dma_state = ONE_WRITE_READY;
+		}
+
+		break;
+
+	case(ONE_READ_ONE_WRITE):
+		if (read_into_reg3)
+		{
+			dma_regs[3] = llsim_mem_extract_dataout(sp->sram, dma_regs[0], 31, 0);
+		}
+		else
+		{
+			dma_regs[4] = llsim_mem_extract_dataout(sp->sram, dma_regs[0], 31, 0);
+		}
+		read_into_reg3 = !read_into_reg3; //next, data will be loaded to other register
+		dma_regs[2]--;
+
+		if (mem_available)
+		{
+			int temp_reg; //simulate mux choosing which register to write
+			if (write_reg3)
+			{
+				temp_reg = dma_regs[3];
+			}
+			else
+			{
+				temp_reg = dma_regs[4];
+			}
+			llsim_mem_write(sp->sram, dma_regs[1]);
+			llsim_mem_set_datain(sp->sram, temp_reg, 31, 0);
+			dma_regs[1]++;
+			write_reg3 = !write_reg3; //next, data will be loaded to other register
+			ctl_dma_state = ONE_WRITE_READY;
+		}
+		else
+		{
+			ctl_dma_state = TWO_WRITE_READY;
+		}
+		break;
+
+	case(TWO_WRITE_READY):
+		if (mem_available)
+		{
+			int temp_reg; //simulate mux choosing which register to write
+			if (write_reg3)
+			{
+				temp_reg = dma_regs[3];
+			}
+			else
+			{
+				temp_reg = dma_regs[4];
+			}
+			llsim_mem_write(sp->sram, dma_regs[1]);
+			llsim_mem_set_datain(sp->sram, temp_reg, 31, 0);
+			dma_regs[1]++;
+			write_reg3 = !write_reg3; //next, data will be loaded to other register
+			ctl_dma_state = ONE_WRITE_READY;
+		}
+		else
+		{
+			ctl_dma_state = TWO_WRITE_READY;
+		}
+		break;
+	case(ONE_WRITE_READY):
+		if (mem_available)
+		{
+			int temp_reg; //simulate mux choosing which register to write
+			if (write_reg3)
+			{
+				temp_reg = dma_regs[3];
+			}
+			else
+			{
+				temp_reg = dma_regs[4];
+			}
+			llsim_mem_write(sp->sram, dma_regs[1]);
+			llsim_mem_set_datain(sp->sram, temp_reg, 31, 0);
+			dma_regs[1]++;
+			write_reg3 = !write_reg3; //next, data will be loaded to other register
+			ctl_dma_state = ONE_WRITE_READY;
+		}
+		else
+		{
+			ctl_dma_state = ONE_WRITE_READY;
+		}
+		break;
+	case(DMA_IDLE_STATE):
+		if (dma_opcode_received)
+		{
+			ctl_dma_state = NO_READ_WRITE; //TODO check values are ok
+		}
+		break;
+
+
+	}
+
+}
 
 
 
