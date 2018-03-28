@@ -34,6 +34,10 @@ bool dma_opcode_received = false;
 // 3 bit control state machine of DMA
 int ctl_dma_state;
 
+//DMA functions
+void perform_dma_logic(bool mem_available, sp_t *sp);
+void init_dma_logic(int source, int dest, int amount);
+
 // control states
 #define NO_READ_WRITE		0
 #define ONE_READ_NO_WRITE	1
