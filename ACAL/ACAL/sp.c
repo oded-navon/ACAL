@@ -24,6 +24,16 @@ typedef enum {
 	inst_params_opcode_shift = 25     // 00111110000000000000000000000000
 }inst_params_shift;
 
+#define NUM_OF_REGS (8)
+#define MAX_STR_LEN (1024)
+#define HALT_OPCODE (24)
+#define SUCCESS (0)
+#define FAIL (-1)
+#define TRACE_FILE ("inst_trace.txt")
+#define SRAM_OUT ("sram_out.txt")
+
+
+
 #define sp_printf(a...)						\
 	do {							\
 		llsim_printf("sp: clock %d: ", llsim->clock);	\
@@ -146,7 +156,6 @@ static void dump_sram(sp_t *sp)
 	fclose(fp);
 }
 
-
 static void sp_ctl(sp_t *sp)
 {
 	sp_registers_t *spro = sp->spro;
@@ -173,14 +182,6 @@ static void sp_ctl(sp_t *sp)
 
 	sprn->cycle_counter = spro->cycle_counter + 1;
 
-	int temp0 = 0;
-	int temp1 = 0;
-	int mem_adr_to_read_from;
-	int src0_for_jumps;
-	int src1_for_jumps;
-	int mem_adr_to_write_to;
-	int data_to_write_in_st;
-
 	switch (spro->ctl_state) {
 	case CTL_STATE_IDLE:
 		sprn->pc = 0;
@@ -189,13 +190,17 @@ static void sp_ctl(sp_t *sp)
 		break;
 
 	case CTL_STATE_FETCH0:
+		//Trace first line in inst_trace
+		print_line1(inst_trace_fp, nr_simulated_instructions, spro->pc);
+
 		llsim_mem_read(sp->sram, spro->pc);
-		sprn->ctl_state = CTL_STATE_FETCH1; 
+		sprn->ctl_state = CTL_STATE_FETCH1;
 		sprn->pc = (spro->pc);
+		nr_simulated_instructions++;
 		break;
 
 	case CTL_STATE_FETCH1:
-		sprn->inst = llsim_mem_extract_dataout(sp->sram, 31, 0);
+		sprn->inst = llsim_mem_extract_dataout(sp->sram, 31, 0);;
 		sprn->ctl_state = CTL_STATE_DEC0; 
 		sprn->pc = (spro->pc);
 		break;
@@ -213,6 +218,11 @@ static void sp_ctl(sp_t *sp)
 		break;
 
 	case CTL_STATE_DEC1:
+		//Trace lines 2,3,4 in inst_trace, inst is decoded and ready
+		print_line2(inst_trace_fp, sp->spro);
+		print_line3(inst_trace_fp, sp->spro);
+		print_line4(inst_trace_fp, sp->spro);
+
 		if (spro->src0 == 1)
 		{
 			sprn->alu0 = spro->immediate;
@@ -233,312 +243,155 @@ static void sp_ctl(sp_t *sp)
 
 		sprn->ctl_state = CTL_STATE_EXEC0; 
 		sprn->pc = (spro->pc);
+
 		break;
 
 	case CTL_STATE_EXEC0:
 	//in this step we change the pc to the pc of the next instruction(pc++ or with jump instruction)
-
 	switch (spro->opcode)
 	{
 		case ADD:
 			sprn->aluout = spro->alu0 + spro->alu1;
-			sprn->pc = (spro->pc)++;
 			break;
 
 		case SUB:
 			sprn->aluout = spro->alu0 - spro->alu1;
-			sprn->pc = (spro->pc)++;
 			break;
 
 		case LSF:
 			sprn->aluout = spro->alu0 << spro->alu1;
-			sprn->pc = (spro->pc)++;
 			break;
 
 		case RSF:
 			sprn->aluout = spro->alu0 >> spro->alu1;
-			sprn->pc = (spro->pc)++;
 			break;
 
 		case AND:
 			sprn->aluout = spro->alu0 & spro->alu1;
-			sprn->pc = (spro->pc)++;
 			break;
 
 		case OR:
 			sprn->aluout = spro->alu0 | spro->alu1;
-			sprn->pc = (spro->pc)++;
 			break;
 
 		case XOR:
 			sprn->aluout = spro->alu0 ^ spro->alu1;
-			sprn->pc = (spro->pc)++;
 			break;
 
 		case LHI:
-			temp0 = (spro->immediate) << 16;
 			// we need to only load the imm into the high bits of dst 
 			// and not override the lower bits of dst, so we use AND
 			if (spro->dst > 1)
 			{
-				sprn->aluout = spro->alu0 & temp0;
+				sprn->aluout = spro->alu0 & (spro->immediate) << 16;
 			}
-			sprn->pc = (spro->pc)++;
 			break;
 
 		case LD:
-			//if src1 is R1, we use the imm
-			if (spro->src1 == 1)
+			if (spro->alu1 < SP_SRAM_HEIGHT)
 			{
-				mem_adr_to_read_from = spro->immediate;
+				llsim_mem_read(sp->sram, spro->alu1);
 			}
-			else
-			{
-				mem_adr_to_read_from = spro->r[spro->src1];
-			}
-			//now start the load
-			if (mem_adr_to_read_from < SP_SRAM_HEIGHT)
-			{
-				llsim_mem_read(sp->sram, mem_adr_to_read_from);
-			}
-			sprn->pc = (spro->pc)++;
 			break;
 
 		case ST:
 			// In EXEC0 we don't execute write operations, they're executed in EXEC1
 			// We just advance the pc, like we do for other operations in this cycle
-			sprn->pc = (spro->pc)++;
 			break;
 
 		case JLT:
-			//if src0 is R1, we use the imm for src0
-			if (spro->src0 == 1)
-			{
-				src0_for_jumps = spro->immediate;
-			}
-			else
-			{
-				src0_for_jumps = spro->r[spro->src0];
-			}
-			//if src1 is R1, we use the imm for src1
-			if (spro->src1 == 1)
-			{
-				src1_for_jumps = spro->immediate;
-			}
-			else
-			{
-				src1_for_jumps = spro->r[spro->src1];
-			}
-
-			// now check the jump condition
-			if (src0_for_jumps < src1_for_jumps)
-			{
-				sprn->r[7] = spro->pc;
-				sprn->pc = spro->immediate;
-			}
-			else
-			{
-				sprn->pc = (spro->pc)++;
-			}
+			sprn->aluout = spro->alu0 < spro->alu1;
 			break;
 
 		case JLE:
-			//if src0 is R1, we use the imm for src0
-			if (spro->src0 == 1)
-			{
-				src0_for_jumps = spro->immediate;
-			}
-			else
-			{
-				src0_for_jumps = spro->r[spro->src0];
-			}
-			//if src1 is R1, we use the imm for src1
-			if (spro->src1 == 1)
-			{
-				src1_for_jumps = spro->immediate;
-			}
-			else
-			{
-				src1_for_jumps = spro->r[spro->src1];
-			}
-
-			// now check the jump condition
-			if (src0_for_jumps <= src1_for_jumps)
-			{
-				sprn->r[7] = spro->pc;
-				sprn->pc = spro->immediate;
-			}
-			else
-			{
-				sprn->pc = (spro->pc)++;
-			}
+			sprn->aluout = spro->alu0 <= spro->alu1;
 			break;
 
 		case JEQ:
-			//if src0 is R1, we use the imm for src0
-			if (spro->src0 == 1)
-			{
-				src0_for_jumps = spro->immediate;
-			}
-			else
-			{
-				src0_for_jumps = spro->r[spro->src0];
-			}
-
-			//if src1 is R1, we use the imm for src1
-			if (spro->src1 == 1)
-			{
-				src1_for_jumps = spro->immediate;
-			}
-			else
-			{
-				src1_for_jumps = spro->r[spro->src1];
-			}
-
-			// now check the jump condition
-			if (src0_for_jumps == src1_for_jumps)
-			{
-				sprn->r[7] = spro->pc;
-				sprn->pc = spro->immediate;
-			}
-			else
-			{
-				sprn->pc = (spro->pc)++;
-			}
+			sprn->aluout = spro->alu0 == spro->alu1;
 			break;
 
 		case JNE:
-			//if src0 is R1, we use the imm for src0
-			if (spro->src0 == 1)
-			{
-				src0_for_jumps = spro->immediate;
-			}
-			else
-			{
-				src0_for_jumps = spro->r[spro->src0];
-			}
-			
-			//if src1 is R1, we use the imm for src1
-			if (spro->src1 == 1)
-			{
-				src1_for_jumps = spro->immediate;
-			}
-			else
-			{
-				src1_for_jumps = spro->r[spro->src1];
-			}
-
-			// now check the jump condition
-			if (src0_for_jumps != src1_for_jumps)
-			{
-				sprn->r[7] = spro->pc;
-				sprn->pc = spro->immediate;
-			}
-			else
-			{
-				sprn->pc = (spro->pc)++;
-			}
+			sprn->aluout = spro->alu0 != spro->alu1;
 			break;
 
 		case JIN:
-			//if src0 is R1, we use the imm for src0
-			if (spro->src0 == 1)
+			//Check edge case: the address we need to jump to is bigger than the memory
+			if (spro->alu0 < SP_SRAM_HEIGHT)
 			{
-				src0_for_jumps = spro->immediate;
-			}
-			else
-			{
-				src0_for_jumps = spro->r[spro->src0];
-			}
-
-			// now check the jump condition
-			if (src0_for_jumps < SP_SRAM_HEIGHT)
-			{
-				sprn->r[7] = spro->pc;
-				sprn->pc = spro->immediate;
-			}
-			else
-			{
-				sprn->pc = (spro->pc)++;
+				sprn->aluout = 1;
 			}
 			break;
 
 		case HLT:
-			sprn->pc = (spro->pc)++;
 			break;
 	}
+
 		sprn->ctl_state = CTL_STATE_EXEC1; 
-		
+
 		break;
 
 	case CTL_STATE_EXEC1:
+		switch (spro->opcode)
+		{
+			case ADD:
+			case SUB:
+			case LSF:
+			case RSF:
+			case AND:
+			case OR:
+			case XOR:
+			case LHI:
+				sprn->r[spro->dst] = spro->aluout;
+				break;
 
-	switch (spro->opcode)
-	{
-		case ADD:
-		case SUB:
-		case LSF:
-		case RSF:
-		case AND:
-		case OR:
-		case XOR:
-		case LHI:
-			sprn->r[spro->dst] = spro->aluout;
-			break;
+			case LD:
+				// check that the dst register is in the correct range
+				if (spro->dst > 1 && spro->dst < 8)
+				{
+					sprn->r[spro->dst] = llsim_mem_extract_dataout(sp->sram, 31, 0);
 
-		case LD:
-			// check that the dst register is in the correct range
-			if (spro->dst > 1 && spro->dst < 8)
-			{
-				sprn->r[spro->dst] = llsim_mem_extract_dataout(sp->sram, 31, 0);
-			}
-			break;
+				}
+				break;
 
-		case ST:
-			//if src0 is R1, the data we write is the imm
-			if (spro->src0 == 1)
-			{
-				data_to_write_in_st = spro->immediate;
-			}
-			else
-			{
-				data_to_write_in_st = spro->r[spro->src0];
-			}
+			case ST:
+				// now we start the write
+				if (spro->alu1 < SP_SRAM_HEIGHT)
+				{
+					llsim_mem_set_datain(sp->sram, spro->alu0, 31, 0);
+					llsim_mem_write(sp->sram, spro->alu1);
+				}
+				break;
 
-			// if src1 is R1, the memory address we write to is the imm
-			if (spro->src1 == 1)
-			{
-				mem_adr_to_write_to = spro->immediate;
-			}
-			else
-			{
-				mem_adr_to_write_to = spro->r[spro->src1];
-			}
-			// now we start the write
-			if (mem_adr_to_write_to < SP_SRAM_HEIGHT)
-			{
-				llsim_mem_set_datain(sp->sram, data_to_write_in_st, 31, 0);
-				llsim_mem_write(sp->sram, mem_adr_to_write_to);
-			}
-			break;
-
-		case JLT:
-		case JLE:
-		case JEQ:
-		case JNE:
-		case JIN:
-		case HLT:
-			break;
-	}
+			case JLT:
+			case JLE:
+			case JEQ:
+			case JNE:
+			case JIN:
+				if (spro->aluout)
+				{
+					sprn->r[7] = spro->pc;
+					sprn->pc = spro->immediate - 1;
+				}
+				break;
+			case HLT:
+				dump_sram(sp);
+				llsim_stop();
+				break;
+		}
+		sprn->pc++;
+		print_line5(inst_trace_fp, sp);
 		if (spro->opcode == HLT)
 		{
-			sprn->ctl_state = CTL_STATE_IDLE; 
+			sprn->ctl_state = CTL_STATE_IDLE;
+			end_trace(inst_trace_fp, nr_simulated_instructions-1, sp->spro->pc-1);
+			fclose(inst_trace_fp);
+			fclose(cycle_trace_fp);
 		}
 		else
 		{
 			sprn->ctl_state = CTL_STATE_FETCH0;
 		}
-		
 		break;
 	}
 }
@@ -577,7 +430,7 @@ static void sp_generate_sram_memory_image(sp_t *sp, char *program_name)
         }
 	sp->memory_image_size = addr;
 
-        fprintf(inst_trace_fp, "program %s loaded, %d lines\n", program_name, addr);
+        fprintf(inst_trace_fp, "program %s loaded, %d lines\n\n", program_name, addr);
 
 	for (i = 0; i < sp->memory_image_size; i++)
 		llsim_mem_inject(sp->sram, i, sp->memory_image[i], 31, 0);
@@ -644,4 +497,259 @@ void sp_init(char *program_name)
 	sp->start = 1;
 
 	sp_register_all_registers(sp);
+}
+
+
+
+
+//Functions we use for instruction traces
+int end_trace(FILE* file, int cnt, int pc);
+int print_line1(FILE* file, int cnt_of_inst, int pc_of_inst);
+int print_line2(FILE* file, sp_registers_t* inst_regs);
+int print_line3(FILE* file, sp_registers_t* inst_regs);
+int print_line4(FILE* file, sp_registers_t* inst_regs);
+int print_line5(FILE* file, sp_t* sp);
+
+int print_line1(FILE* file, int cnt_of_inst, int pc_of_inst)
+{
+	int return_value = SUCCESS;
+
+	int check_ret = 0;
+	char line_to_print[MAX_STR_LEN];
+
+	check_ret = sprintf(line_to_print,
+		"--- instruction %d (%04x) @ PC %d (%04d) -----------------------------------------------------------\n",
+		cnt_of_inst,
+		cnt_of_inst,
+		pc_of_inst,
+		pc_of_inst
+	);
+
+	if (check_ret < 0)
+	{
+		return_value = FAIL;
+	}
+
+	check_ret = fprintf(file, line_to_print);
+	if (check_ret < 0)
+	{
+		return_value = FAIL;
+	}
+
+	return return_value;
+}
+
+int print_line2(FILE* file, sp_registers_t* inst_regs)
+{
+	int return_value = SUCCESS;
+
+	int check_ret = 0;
+	char line_to_print[MAX_STR_LEN];
+
+	check_ret = sprintf(line_to_print,
+		"pc = %04d, inst = %08x, opcode = %d (%s), dst = %d, src0 = %d, src1 = %d, immediate = %08x\n",
+		inst_regs->pc,//inst_cmd->pc_of_inst,
+		inst_regs->inst,//inst_cmd->original_inst,
+		inst_regs->opcode,//inst_cmd->opcode,
+		opcode_name[inst_regs->opcode],//opcode_name[inst_cmd->opcode],
+		inst_regs->dst,//inst_cmd->dst,
+		inst_regs->src0,//inst_cmd->src0,
+		inst_regs->src1,//inst_cmd->src1,
+		inst_regs->immediate//inst_cmd->imm
+
+	);
+
+	if (check_ret < 0)
+	{
+		return_value = FAIL;
+	}
+
+	check_ret = fprintf(file, line_to_print);
+	if (check_ret < 0)
+	{
+		return_value = FAIL;
+	}
+
+	return return_value;
+}
+
+int print_line3(FILE* file, sp_registers_t* inst_regs)//inst_trace* inst_cmd, int* old_regs)
+{
+	int return_value = SUCCESS;
+
+	int check_ret = 0;
+	char line_to_print[MAX_STR_LEN];
+
+	check_ret = sprintf(line_to_print,
+		"r[0] = %08x r[1] = %08x r[2] = %08x r[3] = %08x\n",
+		inst_regs->r[0],//old_regs[0],
+		inst_regs->immediate,//inst_cmd->imm,
+		inst_regs->r[2],//old_regs[2],
+		inst_regs->r[3]//old_regs[3]
+	);
+
+	if (check_ret < 0)
+	{
+		return_value = FAIL;
+	}
+
+	check_ret = fprintf(file, line_to_print);
+	if (check_ret < 0)
+	{
+		return_value = FAIL;
+	}
+
+	return return_value;
+}
+
+int print_line4(FILE* file, sp_registers_t* inst_regs)//, int* old_regs)
+{
+	int return_value = SUCCESS;
+
+	int check_ret = 0;
+	char line_to_print[MAX_STR_LEN];
+
+	check_ret = sprintf(line_to_print,
+		"r[4] = %08x r[5] = %08x r[6] = %08x r[7] = %08x\n\n",
+		inst_regs->r[4],//old_regs[4],
+		inst_regs->r[5],//old_regs[5],
+		inst_regs->r[6],//old_regs[6],
+		inst_regs->r[7]//old_regs[7]
+	);
+
+	if (check_ret < 0)
+	{
+		return_value = FAIL;
+	}
+
+	check_ret = fprintf(file, line_to_print);
+	if (check_ret < 0)
+	{
+		return_value = FAIL;
+	}
+
+	return return_value;
+}
+
+int print_line5(FILE* file, sp_t* sp)//, inst_trace* inst_cmd)
+{
+	int return_value = SUCCESS;
+
+	int check_ret = 0;
+	char line_to_print[MAX_STR_LEN];
+
+	switch (sp->spro->opcode)
+	{
+	case ADD:
+	case SUB:
+	case LSF:
+	case RSF:
+	case AND:
+	case OR:
+	case XOR:
+		check_ret = sprintf(line_to_print,
+			">>>> EXEC: R[%d] = %d %s %d <<<<\n\n",
+			sp->spro->dst,
+			sp->spro->alu0,
+			opcode_name[sp->spro->opcode],
+			sp->spro->alu1
+		);
+		break;
+
+	case LHI:
+		check_ret = sprintf(line_to_print,
+			">>>> EXEC: R[%d] %s %d <<<<\n\n",
+			sp->spro->dst,
+			opcode_name[sp->spro->opcode],
+			sp->spro->immediate
+		);
+		break;
+	case LD:
+		check_ret = sprintf(line_to_print,
+			">>>> EXEC: R[%d] = MEM[%d] = %08x <<<<\n\n",
+			sp->spro->dst,
+			sp->spro->alu1,// the value of the memory address
+			sp->sprn->r[sp->spro->dst] //the value in the memory address
+		);
+		break;
+
+	case ST:
+		check_ret = sprintf(line_to_print,
+			">>>> EXEC: MEM[%d] = R[%d] = %08x <<<<\n\n",
+			sp->spro->alu1,// the value of the memory address
+			sp->spro->src0, // the register whose value we save 
+			sp->spro->alu0 //the value in the memory address
+		);
+		break;
+
+	case JLT:
+	case JLE:
+	case JEQ:
+	case JNE:
+		check_ret = sprintf(line_to_print,
+			">>>> EXEC: %s %d, %d, %d <<<<\n\n",
+			opcode_name[sp->spro->opcode],
+			sp->spro->alu0,
+			sp->spro->alu1,
+			sp->sprn->pc
+		);
+		break;
+
+	case JIN:
+		check_ret = sprintf(line_to_print,
+			">>>> EXEC: %s %d <<<<\n\n",
+			opcode_name[sp->spro->opcode],
+			sp->sprn->pc
+		);
+		break;
+
+	case HLT:
+		check_ret = sprintf(line_to_print,
+			">>>> EXEC: HALT at PC %04x <<<<\n",
+			sp->spro->pc
+		);
+		break;
+	default:
+		break;
+	}
+
+	if (check_ret < 0)
+	{
+		return_value = FAIL;
+	}
+
+	check_ret = fprintf(file, line_to_print);
+	if (check_ret < 0)
+	{
+		return_value = FAIL;
+	}
+
+	return return_value;
+}
+
+int end_trace(FILE* file, int cnt, int pc)
+{
+	int return_value = SUCCESS;
+
+	int check_ret = 0;
+	char line_to_print[MAX_STR_LEN];
+
+	check_ret = sprintf(line_to_print,
+		"sim finished at pc %d, %d instructions",
+		pc+1,
+		cnt + 1
+	);
+
+	if (check_ret < 0)
+	{
+		return_value = FAIL;
+	}
+
+	check_ret = fprintf(file, line_to_print);
+	if (check_ret < 0)
+	{
+		return_value = FAIL;
+	}
+
+	return return_value;
 }
