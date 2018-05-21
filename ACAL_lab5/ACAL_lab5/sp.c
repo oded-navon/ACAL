@@ -13,7 +13,7 @@
 		llsim_printf("sp: clock %d: ", llsim->clock);	\
 		llsim_printf(a);				\
 	} while (0)
-
+int data_extracted = 0;
 int nr_simulated_instructions = 0;
 FILE *inst_trace_fp = NULL, *cycle_trace_fp = NULL;
 
@@ -202,33 +202,201 @@ static void sp_ctl(sp_t *sp)
 	sprn->cycle_counter = spro->cycle_counter + 1;
 
 	if (sp->start)
+	{
 		sprn->fetch0_active = 1;
+	}
+	else
+	{
+		sprn->fetch0_active = 0;
+	}
 
 	// fetch0
 	sprn->fetch1_active = 0;
-	if (spro->fetch0_active) {
+	if (spro->fetch0_active) {		
+			llsim_mem_read(sp->srami,spro->fetch0_pc);
+			sprn->fetch1_pc = spro->fetch0_pc;			
+		sprn->fetch1_active = 1;
 	}
 
 	// fetch1
-	// FILL HERE
-	
+	sprn->dec0_active = 0;
+	if (spro->fetch1_active) {
+				sprn->dec0_inst = llsim_mem_extract_dataout(sp->srami,31,0);	
+			sprn->dec0_pc = spro->fetch1_pc;
+		sprn->dec0_active = 1;
+	}
+
 	// dec0
-	// FILL HERE
+	sprn->dec1_active = 0;
+	if (spro->dec0_active) {
+			sprn->dec1_opcode = sbs(spro->dec0_inst,29,25);
+			sprn->dec1_dst = sbs(spro->dec0_inst,24,22);
+			sprn->dec1_src0 = sbs(spro->dec0_inst,21,19);
+			sprn->dec1_src1 = sbs(spro->dec0_inst,18,16);
+			sprn->dec1_immediate = ssbs(spro->dec0_inst,15,0);
+
+			sprn->dec1_pc = spro->dec0_pc;
+			sprn->dec1_inst=spro->dec0_inst;
+		sprn->dec1_active = 1;
+	}
 
 	// dec1
-	// FILL HERE
+	sprn->exec0_active = 0;
+	if (spro->dec1_active) {
+			 if (spro->dec1_src0 == 1) 
+			 {
+			 	sprn->exec0_alu0 = spro->dec1_immediate;
+			 }
+			 else
+			 {
+				 sprn->exec0_alu0 = (spro->dec1_src0) ? spro->r[spro->dec1_src0] : 0;
+			 }
+
+			 if (spro->dec1_src1 == 1) 
+			 {
+		 		sprn->exec0_alu1 = spro->dec1_immediate;
+			 }
+			 else
+			 {
+				 sprn->exec0_alu1 = (spro->dec1_src1) ? spro->r[spro->dec1_src1] : 0;
+			 }
+			sprn->exec0_pc = spro->dec1_pc;		
+			sprn->exec0_inst = spro->dec1_inst;
+			sprn->exec0_opcode = spro->dec1_opcode;
+			sprn->exec0_src0 = spro->dec1_src0;
+			sprn->exec0_src1 = spro->dec1_src1;
+			sprn->exec0_dst = spro->dec1_dst;
+			sprn->exec0_immediate = spro->dec1_immediate;
+		
+		sprn->exec0_active = 1;
+	}
 
 	// exec0
-	// FILL HERE
+	sprn->exec1_active = 0;
+	if (spro->exec0_active) {
+			 switch(spro->exec0_opcode)
+			 {
+				 case LD:
+			 		llsim_mem_read(sp->sramd,spro->exec0_alu1);				 		
+			 		break;
+				 case JIN:
+					sprn->exec1_aluout = 1;
+				 	break;
+				 default:
+					if(spro->exec0_dst > 1 && spro->exec0_dst < 8)
+					{
+						if(spro->exec0_dst == spro->dec1_src0) // forwarding ALU to ALU
+						{
+							sprn->exec0_alu0 = sprn->exec1_aluout;
+						}
+
+						if(spro->exec0_dst == spro->dec1_src1) // forwarding ALU to ALU
+						{
+							sprn->exec0_alu1 = sprn->exec1_aluout;
+				 		}
+				 	}
+				 	break;
+			 }
+
+	 		 sprn->exec1_pc = spro->exec0_pc;
+			 sprn->exec1_inst=spro->exec0_inst;
+			 sprn->exec1_opcode = spro->exec0_opcode;
+			 sprn->exec1_src0 = spro->exec0_src0;
+			 sprn->exec1_src1 = spro->exec0_src1;
+			 sprn->exec1_dst = spro->exec0_dst;
+			 sprn->exec1_immediate = spro->exec0_immediate;
+			 sprn->exec1_alu0 = spro->exec0_alu0;
+			 sprn->exec1_alu1 = spro->exec0_alu1;			 
+		
+		sprn->exec1_active = 1;
+	}
 
 	// exec1
 	if (spro->exec1_active) {
-		// FILL HERE
 		if (spro->exec1_opcode == HLT) {
 			llsim_stop();
 			dump_sram(sp, "srami_out.txt", sp->srami);
-			dump_sram(sp, "sramd_out.txt", sp->sramd);
+			dump_sram(sp,"sramd_out.txt",sp->sramd);
 		}
+			switch(spro->exec1_opcode)
+			{
+			case LD:
+			
+				data_extracted = llsim_mem_extract_dataout(sp->sramd, 31, 0);		
+				if(spro->exec1_dst > 1 && spro->exec1_dst < 8)
+				{
+					sprn->r[spro->exec1_dst] = data_extracted;
+					// FORWARD: LD -> ALU
+					if (spro->exec1_dst == spro->dec1_src0) 
+					{
+						sprn->exec0_alu0 = data_extracted;
+					}
+					// FORWARD: LD -> ALU
+					if (spro->exec1_dst == spro->dec1_src1) 
+					{
+						sprn->exec0_alu1 = data_extracted;
+					}
+				}
+		
+		 		break;
+	 		case ST:
+	 			llsim_mem_write(sp->sramd, spro->exec1_alu1);
+	 			llsim_mem_set_datain(sp->sramd,spro->exec1_alu0,31,0);
+	 			break;
+	 		case HLT:
+	 			break;
+	 		case JLT:
+	 		case JLE:
+	 		case JEQ:
+	 		case JNE:	 		
+	 			if(spro->exec1_aluout)
+	 			{
+	 				sprn->fetch0_pc = spro->exec1_immediate - 1;
+	 				sprn->r[7] = spro->exec1_pc;
+	 			}
+	 			break;
+	 		case JIN:
+	 			if(spro->exec1_aluout)
+	 			{
+	 				sprn->fetch0_pc = spro->exec1_alu0 - 1;
+	 				sprn->r[7] = spro->exec1_pc;
+	 			}
+	 			break;
+	 		case ADD:
+			case SUB:
+			case LSF:
+			case RSF:
+			case AND:
+			case OR:
+			case XOR:
+			case LHI:
+				if(spro->exec1_dst >1 && spro->exec1_dst <8)
+				{
+				sprn->r[spro->exec1_dst] = spro->exec1_aluout;
+				}
+				// FORWARD: ALU -> ALU
+				if(spro->exec1_dst==spro->dec1_src0) 
+				{
+					sprn->exec0_alu0 = spro->exec1_aluout;
+				}
+				// FORWARD: ALU -> ALU
+				if(spro->exec1_dst==spro->dec1_src1) 
+				{
+					sprn->exec0_alu1 = spro->exec1_aluout;
+				}
+				break;
+			default:
+		 		break;
+			}
+
+		if(spro->exec1_opcode == HLT)
+		{
+			fprintf(inst_trace_fp,"sim finished at pc %d, %d instructions\n",spro->exec1_pc, ic);
+			fclose(inst_trace_fp);
+			fclose(cycle_trace_fp);
+		}
+		
+		sprn->fetch0_pc++;
 	}
 }
 
