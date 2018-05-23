@@ -136,6 +136,25 @@ static void dump_sram(sp_t *sp, char *name, llsim_memory_t *sram)
 	fclose(fp);
 }
 
+typedef enum {
+	inst_params_imm = 65535,        // 00000000000000001111111111111111
+	inst_params_src1 = 458752,      // 00000000000001110000000000000000
+	inst_params_src0 = 3670016,     // 00000000001110000000000000000000
+	inst_params_dst = 29360128,     // 00000001110000000000000000000000
+	inst_params_opcode = 1040187392 // 00111110000000000000000000000000
+}inst_params;
+
+typedef enum {
+	inst_params_imm_shift = 0,        // 00000000000000001111111111111111
+	inst_params_src1_shift = 16,      // 00000000000001110000000000000000
+	inst_params_src0_shift = 19,      // 00000000001110000000000000000000
+	inst_params_dst_shift = 22,       // 00000001110000000000000000000000
+	inst_params_opcode_shift = 25     // 00111110000000000000000000000000
+}inst_params_shift;
+
+
+int hazard;
+
 static void sp_ctl(sp_t *sp)
 {
 	sp_registers_t *spro = sp->spro;
@@ -212,62 +231,73 @@ static void sp_ctl(sp_t *sp)
 
 	// fetch0
 	sprn->fetch1_active = 0;
-	if (spro->fetch0_active) {		
-			llsim_mem_read(sp->srami,spro->fetch0_pc);
-			sprn->fetch1_pc = spro->fetch0_pc;			
+	if (spro->fetch0_active) {
+		if (!hazard)
+		{ 
+			llsim_mem_read(sp->srami, spro->fetch0_pc);
+			sprn->fetch1_pc = spro->fetch0_pc;
+		}
 		sprn->fetch1_active = 1;
 	}
 
 	// fetch1
 	sprn->dec0_active = 0;
 	if (spro->fetch1_active) {
-				sprn->dec0_inst = llsim_mem_extract_dataout(sp->srami,31,0);	
+		if (!hazard)
+		{
+			sprn->dec0_inst = llsim_mem_extract_dataout(sp->srami, 31, 0);
 			sprn->dec0_pc = spro->fetch1_pc;
+		}
 		sprn->dec0_active = 1;
 	}
 
 	// dec0
 	sprn->dec1_active = 0;
 	if (spro->dec0_active) {
-			sprn->dec1_opcode = sbs(spro->dec0_inst,29,25);
-			sprn->dec1_dst = sbs(spro->dec0_inst,24,22);
-			sprn->dec1_src0 = sbs(spro->dec0_inst,21,19);
-			sprn->dec1_src1 = sbs(spro->dec0_inst,18,16);
-			sprn->dec1_immediate = ssbs(spro->dec0_inst,15,0);
+		if (!hazard)
+		{
+			sprn->dec1_opcode = sbs(spro->dec0_inst, 29, 25);
+			sprn->dec1_dst = sbs(spro->dec0_inst, 24, 22);
+			sprn->dec1_src0 = sbs(spro->dec0_inst, 21, 19);
+			sprn->dec1_src1 = sbs(spro->dec0_inst, 18, 16);
+			sprn->dec1_immediate = ssbs(spro->dec0_inst, 15, 0);
 
 			sprn->dec1_pc = spro->dec0_pc;
-			sprn->dec1_inst=spro->dec0_inst;
+			sprn->dec1_inst = spro->dec0_inst;
+		}
 		sprn->dec1_active = 1;
 	}
 
 	// dec1
 	sprn->exec0_active = 0;
 	if (spro->dec1_active) {
-			 if (spro->dec1_src0 == 1) 
-			 {
-			 	sprn->exec0_alu0 = spro->dec1_immediate;
-			 }
-			 else
-			 {
-				 sprn->exec0_alu0 = (spro->dec1_src0) ? spro->r[spro->dec1_src0] : 0;
-			 }
+		if (!hazard)
+		{
+			if (spro->dec1_src0 == 1)
+			{
+				sprn->exec0_alu0 = spro->dec1_immediate;
+			}
+			else
+			{
+				sprn->exec0_alu0 = (spro->dec1_src0) ? spro->r[spro->dec1_src0] : 0;
+			}
 
-			 if (spro->dec1_src1 == 1) 
-			 {
-		 		sprn->exec0_alu1 = spro->dec1_immediate;
-			 }
-			 else
-			 {
-				 sprn->exec0_alu1 = (spro->dec1_src1) ? spro->r[spro->dec1_src1] : 0;
-			 }
-			sprn->exec0_pc = spro->dec1_pc;		
+			if (spro->dec1_src1 == 1)
+			{
+				sprn->exec0_alu1 = spro->dec1_immediate;
+			}
+			else
+			{
+				sprn->exec0_alu1 = (spro->dec1_src1) ? spro->r[spro->dec1_src1] : 0;
+			}
+			sprn->exec0_pc = spro->dec1_pc;
 			sprn->exec0_inst = spro->dec1_inst;
 			sprn->exec0_opcode = spro->dec1_opcode;
 			sprn->exec0_src0 = spro->dec1_src0;
 			sprn->exec0_src1 = spro->dec1_src1;
 			sprn->exec0_dst = spro->dec1_dst;
 			sprn->exec0_immediate = spro->dec1_immediate;
-		
+		}
 		sprn->exec0_active = 1;
 	}
 
