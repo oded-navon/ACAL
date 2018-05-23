@@ -270,23 +270,17 @@ static void sp_ctl(sp_t *sp)
 	sprn->cycle_counter = spro->cycle_counter + 1;
 
 	if (sp->start)
-	{
 		sprn->fetch0_active = 1;
-	}
-	else
-	{
-		sprn->fetch0_active = 0;
-	}
-
 
 	bool mem_available = true;
 	// fetch0
 	sprn->fetch1_active = 0;
 	if (spro->fetch0_active) {
-		if (!raw_hazard)
+		if (raw_hazard == 0)
 		{ 
 			llsim_mem_read(sp->srami, spro->fetch0_pc);
 			sprn->fetch1_pc = spro->fetch0_pc;
+			sprn->fetch0_pc++;
 		}
 		sprn->fetch1_active = 1;
 	}
@@ -294,7 +288,7 @@ static void sp_ctl(sp_t *sp)
 	// fetch1
 	sprn->dec0_active = 0;
 	if (spro->fetch1_active) {
-		if (!raw_hazard)
+		if (raw_hazard == 0)
 		{
 			// When we fetch an instruction in fetch0, we must extract that instruction in fetch1, even if we got a hazard previouly
 			if (!inst_fetched)
@@ -318,7 +312,7 @@ static void sp_ctl(sp_t *sp)
 	// dec0
 	sprn->dec1_active = 0;
 	if (spro->dec0_active) {
-		if (!raw_hazard)
+		if (raw_hazard == 0)
 		{
 			int opcode = (spro->dec0_inst & inst_params_opcode) >> inst_params_opcode_shift;
 			sprn->dec1_opcode = opcode;
@@ -361,7 +355,7 @@ static void sp_ctl(sp_t *sp)
 		{
 			init_dma_logic(spro->r[spro->dec1_dst], spro->r[spro->dec1_src0], spro->dec1_immediate);
 		}
-		else if (!raw_hazard || (spro->dec1_opcode == LD))
+		else if (raw_hazard == 0 || (spro->dec1_opcode == LD))
 		{
 			if (spro->dec1_src0 == 1)
 			{
@@ -552,15 +546,10 @@ static void sp_ctl(sp_t *sp)
 
 	// exec1
 	if (spro->exec1_active) {
-		if (spro->exec1_opcode == HLT) {
-			llsim_stop();
-			dump_sram(sp, "srami_out.txt", sp->srami);
-			dump_sram(sp,"sramd_out.txt",sp->sramd);
-		}
+		sp_printf("In exec1\n");
 			switch(spro->exec1_opcode)
 			{
 			case LD:
-			
 				data_extracted = llsim_mem_extract_dataout(sp->sramd, 31, 0);		
 				if(spro->exec1_dst > 1 && spro->exec1_dst < 8)
 				{
@@ -628,22 +617,25 @@ static void sp_ctl(sp_t *sp)
 			default:
 		 		break;
 			}
+			sp_printf("In exec1 after switch\n");
 		if (pc_of_last_inst_executed != spro->exec1_pc)
 		{
-			print_all_lines(spro->exec1_pc, pc_of_last_inst_executed, nr_simulated_instructions);
+			print_all_lines(sp, pc_of_last_inst_executed, nr_simulated_instructions);
 			pc_of_last_inst_executed = spro->exec1_pc;
 			nr_simulated_instructions++;
 		}
-
+		sp_printf("In exec1 after print\n");
 		if(spro->exec1_opcode == HLT)
 		{
-
+			llsim_stop();
 			end_trace(inst_trace_fp, nr_simulated_instructions, pc_of_last_inst_executed);
 
 			ctl_dma_state = DMA_IDLE_STATE;
 			dma_opcode_received = false;
 			fclose(inst_trace_fp);
 			fclose(cycle_trace_fp);
+			dump_sram(sp, "srami_out.txt", sp->srami);
+			dump_sram(sp, "sramd_out.txt", sp->sramd);
 		}
 
 		if (dma_opcode_received)
@@ -651,8 +643,6 @@ static void sp_ctl(sp_t *sp)
 			//llsim_printf("dma received\n");
 			perform_dma_logic(mem_available, sp);
 		}
-		
-		sprn->fetch0_pc++;
 	}
 }
 
@@ -961,11 +951,17 @@ int print_line5(FILE* file, sp_t* sp)
 void print_all_lines(sp_t* sp, int pc_of_inst, int nr_sim_inst)
 {
 	print_line1(inst_trace_fp, nr_sim_inst, pc_of_inst);
+	//sp_printf("In print_all_lines after 1\n");
 	print_line2(inst_trace_fp, sp->spro);
+	//sp_printf("In print_all_lines after 2\n");
 	print_line3(inst_trace_fp, sp->spro);
+	//sp_printf("In print_all_lines after 3\n");
 	print_line4(inst_trace_fp, sp->spro);
+	//sp_printf("In print_all_lines after 4\n");
 	print_line5(inst_trace_fp, sp);
+	//sp_printf("In print_all_lines after 5\n");
 	fflush(inst_trace_fp);
+	//sp_printf("In print_all_lines after flush\n");
 }
 
 int end_trace(FILE* file, int cnt, int pc)
