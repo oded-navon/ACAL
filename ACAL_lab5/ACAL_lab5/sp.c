@@ -321,7 +321,7 @@ static void sp_ctl(sp_t *sp)
 			sprn->dec1_src1 = (spro->dec0_inst & inst_params_src1) >> inst_params_src1_shift;
 			sprn->dec1_src0 = (spro->dec0_inst & inst_params_src0) >> inst_params_src0_shift;
 			sprn->dec1_dst = (spro->dec0_inst & inst_params_dst) >> inst_params_dst_shift;
-			if (spro->dec1_opcode == LD && ((sprn->dec1_src0 == spro->dec1_dst) || (sprn->dec1_src1 == spro->dec1_dst)))
+			if ((spro->dec1_opcode == LD || spro->dec1_opcode == ST) && ((sprn->dec1_src0 == spro->dec1_dst) || (sprn->dec1_src1 == spro->dec1_dst)))
 			{
 				raw_hazard = 1;
 			}
