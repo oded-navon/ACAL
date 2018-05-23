@@ -437,18 +437,9 @@ static void sp_ctl(sp_t *sp)
 			break;
 
 		case ST:
-			mem_available = false;
-			int temp_reg;
-			if (spro->exec0_alu0 == sprn->exec0_dst)  //FW ALU result to store
-			{
-				temp_reg = sprn->exec0_dst;
-			}
-			else
-			{
-				temp_reg = spro->exec0_alu0;
-			}
-			llsim_mem_set_datain(sp->sramd, spro->exec1_alu0, 31, 0);
-			llsim_mem_write(sp->sramd, spro->exec1_alu1);
+			mem_available = false;			
+			llsim_mem_set_datain(sp->sramd, spro->exec0_alu0, 31, 0);
+			llsim_mem_write(sp->sramd, spro->exec0_alu1);
 			break;
 
 		case JLT:
@@ -529,6 +520,15 @@ static void sp_ctl(sp_t *sp)
 						 jump_predictors[(spro->exec0_pc % 40)]--;
 					 }
 				 }
+			 case ST:
+				 if (sprn->exec0_src0 == spro->exec0_dst)  //FW ALU result to store
+				 {
+					 sprn->exec0_alu0 = sprn->exec1_aluout;
+				 }
+				 if (sprn->exec0_src1 == spro->exec0_dst)
+				 {
+					 sprn->exec0_alu1 = sprn->exec1_aluout;
+				 }
 				 default:
 					
 				 	break;
@@ -577,8 +577,6 @@ static void sp_ctl(sp_t *sp)
 		
 		 		break;
 	 		case ST:
-	 			llsim_mem_write(sp->sramd, spro->exec1_alu1);
-	 			llsim_mem_set_datain(sp->sramd,spro->exec1_alu0,31,0);
 	 			break;
 	 		case HLT:
 	 			break;
