@@ -139,6 +139,7 @@ int ctl_dma_state;
 int jump_predictors[40];
 
 
+
 static char opcode_name[32][4] = {"ADD", "SUB", "LSF", "RSF", "AND", "OR", "XOR", "LHI",
 				 "LD", "ST", "U", "U", "U", "U", "U", "U",
 				 "JLT", "JLE", "JEQ", "JNE", "JIN", "U", "U", "U",
@@ -351,7 +352,7 @@ static void sp_ctl(sp_t *sp)
 	// exec0
 	sprn->exec1_active = 0;	  //TODO make sure handles polling also. same as ex2.
 	if (spro->exec0_active) {
-			 switch(spro->exec0_opcode)
+		switch(spro->exec0_opcode)
 			 {
 				 case LD:
 					 mem_available = false;
@@ -378,16 +379,49 @@ static void sp_ctl(sp_t *sp)
 				 	}
 				 	break;
 			 }
+			 
+			 
+			 switch (spro->exec0_opcode)
+			 {
+			 case JLT:
+			 case JLE:
+			 case JEQ:
+			 case JNE:
+			 case JIN:
+				 if(sprn->exec1_aluout == 1)
+				 {
+					 if (spro->fetch1_pc != spro->exec0_immediate)
+					 {
+						 flush_pipeline(&sprn);
+					 }
+					 if (jump_predictors[(spro->exec0_pc % 40)] < 2)
+					 {
+						 jump_predictors[(spro->exec0_pc % 40)]++;
+					 }
+				 }
+				 else //if branch is not taken
+				 {
+					 if (spro->fetch1_pc == spro->exec0_immediate)
+					 {
+						 flush_pipeline(&sprn);
+					 }
+					 if (jump_predictors[(spro->exec0_pc % 40)] != 0)
+					 {
+						 jump_predictors[(spro->exec0_pc % 40)]--;
+					 }
+				 }
 
-	 		 sprn->exec1_pc = spro->exec0_pc;
-			 sprn->exec1_inst=spro->exec0_inst;
-			 sprn->exec1_opcode = spro->exec0_opcode;
-			 sprn->exec1_src0 = spro->exec0_src0;
-			 sprn->exec1_src1 = spro->exec0_src1;
-			 sprn->exec1_dst = spro->exec0_dst;
-			 sprn->exec1_immediate = spro->exec0_immediate;
-			 sprn->exec1_alu0 = spro->exec0_alu0;
-			 sprn->exec1_alu1 = spro->exec0_alu1;			 
+			 }
+			 
+	 	sprn->exec1_pc = spro->exec0_pc;
+		sprn->exec1_inst=spro->exec0_inst;
+		sprn->exec1_opcode = spro->exec0_opcode;
+		sprn->exec1_src0 = spro->exec0_src0;
+		sprn->exec1_src1 = spro->exec0_src1;
+		sprn->exec1_dst = spro->exec0_dst;
+		sprn->exec1_immediate = spro->exec0_immediate;
+		sprn->exec1_alu0 = spro->exec0_alu0;
+		sprn->exec1_alu1 = spro->exec0_alu1;			 
 		
 		sprn->exec1_active = 1;
 	}
@@ -747,4 +781,24 @@ int predict_jump(int current_pc)
 {
 	int table_value = jump_predictors[(current_pc % 40)]; //check what's the current pc prediction
 	return table_value > 1; //simulate 2 bit prediction
+}
+
+void flush_pipeline(sp_registers_t** sprn_address)
+{
+	sp_registers_t* sprn = *sprn_address;
+	//flush fetch1
+	sprn->fetch1_pc = -1;
+	
+	//flush dec0
+	sprn->dec0_inst = -1;
+	sprn->dec0_pc = -1;
+	
+	//flush dec1
+	sprn->dec1_dst = -1;
+	sprn->dec1_immediate = -1;
+	sprn->dec1_inst = -1;
+	sprn->dec1_opcode = -1;
+	sprn->dec1_pc = -1;
+	sprn->dec1_src0 = -1;
+	sprn->dec1_src1 = -1;
 }
