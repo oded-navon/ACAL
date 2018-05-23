@@ -201,6 +201,7 @@ void init_dma_logic(int source, int dest, int amount);
 void perform_dma_logic(bool mem_available, sp_t* sp);
 int predict_jump(int current_pc);
 void flush_pipeline(sp_registers_t** sprn_address);
+bool validate_dma_values(int source, int dest, int amount);
 
 
 static void sp_ctl(sp_t *sp)
@@ -1197,4 +1198,11 @@ void flush_pipeline(sp_registers_t** sprn_address)
 	sprn->dec1_pc = -1;
 	sprn->dec1_src0 = -1;
 	sprn->dec1_src1 = -1;
+}
+
+bool validate_dma_values(int source, int dest, int amount)
+{
+	bool res = (amount > 0) && (source >= 0) && (dest >= 0) && (source != dest);
+	//printf("res: %d", res);
+	return res;
 }
