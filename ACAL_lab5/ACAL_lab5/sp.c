@@ -497,29 +497,8 @@ static void sp_ctl(sp_t *sp)
 			 case JLE:
 			 case JEQ:
 			 case JNE:
-			 case JIN:
-				 if(sprn->exec1_aluout == 1)
-				 {
-					 if (spro->fetch1_pc != spro->exec0_immediate)
-					 {
-						 flush_pipeline(&sprn);
-					 }
-					 if (jump_predictors[(spro->exec0_pc % 40)] < 2)
-					 {
-						 jump_predictors[(spro->exec0_pc % 40)]++;
-					 }
-				 }
-				 else //if branch is not taken
-				 {
-					 if (spro->fetch1_pc == spro->exec0_immediate)
-					 {
-						 flush_pipeline(&sprn);
-					 }
-					 if (jump_predictors[(spro->exec0_pc % 40)] != 0)
-					 {
-						 jump_predictors[(spro->exec0_pc % 40)]--;
-					 }
-				 }
+			 case JIN:	//TODO maybe not good
+				 break;
 			 case ST:
 				 if (sprn->exec0_src0 == spro->exec0_dst)  //FW ALU result to store
 				 {
@@ -583,8 +562,31 @@ static void sp_ctl(sp_t *sp)
 	 	case JLT:
 	 	case JLE:
 	 	case JEQ:
-	 	case JNE:	 		
-	 		if(spro->exec1_aluout)
+	 	case JNE:	 	//TODO go over	
+	 		
+			if (sprn->exec1_aluout == 1)
+			{
+				if (spro->fetch1_pc != spro->exec0_immediate)
+				{
+					flush_pipeline(&sprn);
+				}
+				if (jump_predictors[(spro->exec0_pc % 40)] < 2)
+				{
+					jump_predictors[(spro->exec0_pc % 40)]++;
+				}
+			}
+			else //if branch is not taken
+			{
+				if (spro->fetch1_pc == spro->exec0_immediate)
+				{
+					flush_pipeline(&sprn);
+				}
+				if (jump_predictors[(spro->exec0_pc % 40)] != 0)
+				{
+					jump_predictors[(spro->exec0_pc % 40)]--;
+				}
+			}
+			if(spro->exec1_aluout)
 	 		{
 	 			sprn->fetch0_pc = spro->exec1_immediate - 1;
 	 			sprn->r[7] = spro->exec1_pc;
