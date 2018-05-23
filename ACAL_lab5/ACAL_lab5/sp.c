@@ -438,6 +438,15 @@ static void sp_ctl(sp_t *sp)
 
 		case ST:
 			mem_available = false;
+			int temp_reg;
+			if (spro->exec0_alu0 == sprn->exec0_dst)  //FW ALU result to store
+			{
+				temp_reg = sprn->exec0_dst;
+			}
+			else
+			{
+				temp_reg = spro->exec0_alu0;
+			}
 			llsim_mem_set_datain(sp->sramd, spro->exec1_alu0, 31, 0);
 			llsim_mem_write(sp->sramd, spro->exec1_alu1);
 			break;
