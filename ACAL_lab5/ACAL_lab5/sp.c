@@ -135,6 +135,9 @@ int ctl_dma_state;
 #define ONE_WRITE_READY		4
 #define DMA_IDLE_STATE		5
 
+//jump predictors
+int jump_predictors[40];
+
 
 static char opcode_name[32][4] = {"ADD", "SUB", "LSF", "RSF", "AND", "OR", "XOR", "LHI",
 				 "LD", "ST", "U", "U", "U", "U", "U", "U",
@@ -278,14 +281,32 @@ static void sp_ctl(sp_t *sp)
 	if (spro->dec0_active) {
 		if (!hazard)
 		{
-			sprn->dec1_opcode = sbs(spro->dec0_inst, 29, 25);
+			int opcode = sbs(spro->dec0_inst, 29, 25);
+			sprn->dec1_opcode = opcode;
 			sprn->dec1_dst = sbs(spro->dec0_inst, 24, 22);
 			sprn->dec1_src0 = sbs(spro->dec0_inst, 21, 19);
 			sprn->dec1_src1 = sbs(spro->dec0_inst, 18, 16);
-			sprn->dec1_immediate = ssbs(spro->dec0_inst, 15, 0);
+			int	immediate = ssbs(spro->dec0_inst, 15, 0);
+			sprn->dec1_immediate = immediate;
 
 			sprn->dec1_pc = spro->dec0_pc;
 			sprn->dec1_inst = spro->dec0_inst;
+
+			//in case of jumping
+			switch (opcode)
+			{
+				case JLT:
+				case JLE:
+				case JEQ:
+				case JNE:
+				case JIN:
+					if (predict_jump(spro->dec0_pc))
+					{
+						sprn->fetch0_pc = immediate;
+						sprn->r[7] = spro->exec1_pc; //TODO kosta mentioned to check no one overrides r[7], but this is user's responsibility no?
+					}
+
+			}
 		}
 		sprn->dec1_active = 1;
 	}
@@ -328,7 +349,7 @@ static void sp_ctl(sp_t *sp)
 	}
 
 	// exec0
-	sprn->exec1_active = 0;	  //TODO make sure handles polling also
+	sprn->exec1_active = 0;	  //TODO make sure handles polling also. same as ex2.
 	if (spro->exec0_active) {
 			 switch(spro->exec0_opcode)
 			 {
@@ -583,7 +604,7 @@ void perform_dma_logic(bool mem_available, sp_t* sp)
 
 		else if (mem_available)
 		{
-			llsim_mem_read(sp->sram, dma_regs[0]); //fetch MEM[dma_regs[0]]
+			llsim_mem_read(sp->sramd, dma_regs[0]); //fetch MEM[dma_regs[0]]
 			dma_regs[0]++;
 			ctl_dma_state = ONE_READ_NO_WRITE;
 		}
@@ -596,12 +617,12 @@ void perform_dma_logic(bool mem_available, sp_t* sp)
 	case(ONE_READ_NO_WRITE):
 		if (read_into_reg3)
 		{
-			dma_regs[3] = llsim_mem_extract_dataout(sp->sram, 31, 0);
+			dma_regs[3] = llsim_mem_extract_dataout(sp->sramd, 31, 0);
 			//llsim_printf("ONE_READ_NO_WRITE: dma_regs[3] after extract is: %d\n", dma_regs[3]);
 		}
 		else
 		{
-			dma_regs[4] = llsim_mem_extract_dataout(sp->sram, 31, 0);
+			dma_regs[4] = llsim_mem_extract_dataout(sp->sramd, 31, 0);
 			//llsim_printf("ONE_READ_NO_WRITE: dma_regs[4] after extract is: %d\n", dma_regs[4]);
 
 		}
@@ -614,7 +635,7 @@ void perform_dma_logic(bool mem_available, sp_t* sp)
 		}
 		else if (mem_available)
 		{
-			llsim_mem_read(sp->sram, dma_regs[0]);
+			llsim_mem_read(sp->sramd, dma_regs[0]);
 			dma_regs[0]++;
 			ctl_dma_state = ONE_READ_ONE_WRITE;
 		}
@@ -628,13 +649,13 @@ void perform_dma_logic(bool mem_available, sp_t* sp)
 	case(ONE_READ_ONE_WRITE):
 		if (read_into_reg3)
 		{
-			dma_regs[3] = llsim_mem_extract_dataout(sp->sram, 31, 0);
+			dma_regs[3] = llsim_mem_extract_dataout(sp->sramd, 31, 0);
 			//llsim_printf("ONE_READ_ONE_WRITE: dma_regs[3] after extract is: %d\n", dma_regs[3]);
 
 		}
 		else
 		{
-			dma_regs[4] = llsim_mem_extract_dataout(sp->sram, 31, 0);
+			dma_regs[4] = llsim_mem_extract_dataout(sp->sramd, 31, 0);
 			//llsim_printf("ONE_READ_ONE_WRITE: dma_regs[4] after extract is: %d\n", dma_regs[4]);
 		}
 		read_into_reg3 = !read_into_reg3; //next, data will be loaded to other register
@@ -651,8 +672,8 @@ void perform_dma_logic(bool mem_available, sp_t* sp)
 			{
 				temp_reg = dma_regs[4];
 			}
-			llsim_mem_set_datain(sp->sram, temp_reg, 31, 0);
-			llsim_mem_write(sp->sram, dma_regs[1]);
+			llsim_mem_set_datain(sp->sramd, temp_reg, 31, 0);
+			llsim_mem_write(sp->sramd, dma_regs[1]);
 			//llsim_printf("ONE_READ_ONE_WRITE: wrote %d to address %d\n", temp_reg, dma_regs[1]);
 			dma_regs[1]++;
 			write_reg3 = !write_reg3; //next, data will be loaded to other register
@@ -676,8 +697,8 @@ void perform_dma_logic(bool mem_available, sp_t* sp)
 			{
 				temp_reg = dma_regs[4];
 			}
-			llsim_mem_set_datain(sp->sram, temp_reg, 31, 0);
-			llsim_mem_write(sp->sram, dma_regs[1]);
+			llsim_mem_set_datain(sp->sramd, temp_reg, 31, 0);
+			llsim_mem_write(sp->sramd, dma_regs[1]);
 			//llsim_printf("TWO_WRITE_READY: wrote %d to address %d\n", temp_reg, dma_regs[1]);
 			dma_regs[1]++;
 			write_reg3 = !write_reg3; //next, data will be loaded to other register
@@ -696,8 +717,8 @@ void perform_dma_logic(bool mem_available, sp_t* sp)
 			{
 				temp_reg = dma_regs[4];
 			}
-			llsim_mem_set_datain(sp->sram, temp_reg, 31, 0);
-			llsim_mem_write(sp->sram, dma_regs[1]);
+			llsim_mem_set_datain(sp->sramd, temp_reg, 31, 0);
+			llsim_mem_write(sp->sramd, dma_regs[1]);
 			//llsim_printf("ONE_WRITE_READY: wrote %d to address %d\n", temp_reg, dma_regs[1]);
 			dma_regs[1]++;
 			write_reg3 = !write_reg3; //next, data will be loaded to other register
@@ -720,4 +741,10 @@ void perform_dma_logic(bool mem_available, sp_t* sp)
 
 	}
 
+}
+
+int predict_jump(int current_pc)
+{
+	int table_value = jump_predictors[(current_pc % 40)]; //check what's the current pc prediction
+	return table_value > 1; //simulate 2 bit prediction
 }
