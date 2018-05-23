@@ -319,8 +319,8 @@ static void sp_ctl(sp_t *sp)
 	if (spro->dec0_active) {
 		if (!raw_hazard)
 		{
-
-			sprn->dec1_opcode = (spro->dec0_inst & inst_params_opcode) >> inst_params_opcode_shift;
+			int opcode = (spro->dec0_inst & inst_params_opcode) >> inst_params_opcode_shift;
+			sprn->dec1_opcode = opcode;
 			short imm = spro->dec0_inst & inst_params_imm;
 			sprn->dec1_immediate = (int)imm;
 			sprn->dec1_src1 = (spro->dec0_inst & inst_params_src1) >> inst_params_src1_shift;
@@ -330,14 +330,6 @@ static void sp_ctl(sp_t *sp)
 			{
 				raw_hazard = 1;
 			}
-
-			int opcode = sbs(spro->dec0_inst, 29, 25);
-			sprn->dec1_opcode = opcode;
-			sprn->dec1_dst = sbs(spro->dec0_inst, 24, 22);
-			sprn->dec1_src0 = sbs(spro->dec0_inst, 21, 19);
-			sprn->dec1_src1 = sbs(spro->dec0_inst, 18, 16);
-			int	immediate = ssbs(spro->dec0_inst, 15, 0);
-			sprn->dec1_immediate = immediate;
 
 			sprn->dec1_pc = spro->dec0_pc;
 			sprn->dec1_inst = spro->dec0_inst;
@@ -352,7 +344,7 @@ static void sp_ctl(sp_t *sp)
 				case JIN:
 					if (predict_jump(spro->dec0_pc))
 					{
-						sprn->fetch0_pc = immediate;
+						sprn->fetch0_pc = (int)imm;
 						sprn->r[7] = spro->exec1_pc; //TODO kosta mentioned to check no one overrides r[7], but this is user's responsibility no?
 					}
 
@@ -364,9 +356,6 @@ static void sp_ctl(sp_t *sp)
 	// dec1
 	sprn->exec0_active = 0;
 	if (spro->dec1_active) {
-
-
-
 		if (spro->dec1_opcode == DMA && !dma_opcode_received && validate_dma_values(spro->r[spro->dec1_dst], spro->r[spro->dec1_src0], spro->dec1_immediate)) //in case DMA is already working, we ignore the new request
 		{
 			init_dma_logic(spro->r[spro->dec1_dst], spro->r[spro->dec1_src0], spro->dec1_immediate);
