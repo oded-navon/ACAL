@@ -5,7 +5,7 @@
 #include <sys/types.h> 
 #include <sys/socket.h>
 #include <netinet/in.h>
-
+#include <stdbool.h>
 #include "llsim.h"
 
 #define sp_printf(a...)						\
@@ -114,7 +114,27 @@ static void sp_reset(sp_t *sp)
 #define JEQ 18
 #define JNE 19
 #define JIN 20
+#define DMA 21
+#define POL 22
 #define HLT 24
+
+ //DMA hardware
+int dma_regs[5]; //registers serving the DMA functionality
+bool read_into_reg3 = true;	//if false, read into reg4
+bool write_reg3 = true;  //if false, write reg4's data
+bool dma_opcode_received = false;
+
+// 3 bit control state machine of DMA
+int ctl_dma_state;
+
+// control states
+#define NO_READ_WRITE		0
+#define ONE_READ_NO_WRITE	1
+#define ONE_READ_ONE_WRITE	2
+#define TWO_WRITE_READY		3
+#define ONE_WRITE_READY		4
+#define DMA_IDLE_STATE		5
+
 
 static char opcode_name[32][4] = {"ADD", "SUB", "LSF", "RSF", "AND", "OR", "XOR", "LHI",
 				 "LD", "ST", "U", "U", "U", "U", "U", "U",
@@ -229,6 +249,8 @@ static void sp_ctl(sp_t *sp)
 		sprn->fetch0_active = 0;
 	}
 
+
+	bool mem_available = true;
 	// fetch0
 	sprn->fetch1_active = 0;
 	if (spro->fetch0_active) {
@@ -271,7 +293,11 @@ static void sp_ctl(sp_t *sp)
 	// dec1
 	sprn->exec0_active = 0;
 	if (spro->dec1_active) {
-		if (!hazard)
+		if (spro->dec1_opcode == DMA && !dma_opcode_received && validate_dma_values(spro->r[spro->dec1_dst], spro->r[spro->dec1_src0], spro->dec1_immediate)) //in case DMA is already working, we ignore the new request
+		{
+			init_dma_logic(spro->r[spro->dec1_dst], spro->r[spro->dec1_src0], spro->dec1_immediate);
+		}
+		else if (!hazard)
 		{
 			if (spro->dec1_src0 == 1)
 			{
@@ -302,13 +328,17 @@ static void sp_ctl(sp_t *sp)
 	}
 
 	// exec0
-	sprn->exec1_active = 0;
+	sprn->exec1_active = 0;	  //TODO make sure handles polling also
 	if (spro->exec0_active) {
 			 switch(spro->exec0_opcode)
 			 {
 				 case LD:
-			 		llsim_mem_read(sp->sramd,spro->exec0_alu1);				 		
+					 mem_available = false;
+					 llsim_mem_read(sp->sramd,spro->exec0_alu1);				 		
 			 		break;
+				 case ST:	//TODO validate if doing this here or not. if not, delete and move mem_available assignment
+					 mem_available = false;
+					 break;
 				 case JIN:
 					sprn->exec1_aluout = 1;
 				 	break;
@@ -400,6 +430,7 @@ static void sp_ctl(sp_t *sp)
 			case OR:
 			case XOR:
 			case LHI:
+			case POL:
 				if(spro->exec1_dst >1 && spro->exec1_dst <8)
 				{
 				sprn->r[spro->exec1_dst] = spro->exec1_aluout;
@@ -422,8 +453,16 @@ static void sp_ctl(sp_t *sp)
 		if(spro->exec1_opcode == HLT)
 		{
 			fprintf(inst_trace_fp,"sim finished at pc %d, %d instructions\n",spro->exec1_pc, ic);
+			ctl_dma_state = DMA_IDLE_STATE;
+			dma_opcode_received = false;
 			fclose(inst_trace_fp);
 			fclose(cycle_trace_fp);
+		}
+
+		if (dma_opcode_received)
+		{
+			//llsim_printf("dma received\n");
+			perform_dma_logic(mem_available, sp);
 		}
 		
 		sprn->fetch0_pc++;
@@ -513,4 +552,172 @@ void sp_init(char *program_name)
 	sp->start = 1;
 	
 	// c2v_translate_end
+}
+
+void init_dma_logic(int source, int dest, int amount)
+{
+	dma_regs[0] = source;
+	dma_regs[1] = dest;
+	dma_regs[2] = amount;
+	dma_opcode_received = true;
+	//printf("dma_regs[0]: %d, dma_regs[1]: %d, and dma_regs[2]: %d\n", dma_regs[0], dma_regs[1], dma_regs[2]);
+}
+
+
+void perform_dma_logic(bool mem_available, sp_t* sp)
+{
+	//llsim_printf("dma state %d and sp is %d\n", ctl_dma_state, sp->spro->ctl_state);
+	//llsim_printf("dma_regs[2] is %d and mem_available is %d\n", dma_regs[2], mem_available);
+	//llsim_printf("read_into_reg3 is %d and write_reg3 is %d. dma_opcode_received is %d\n\n", read_into_reg3, write_reg3, dma_opcode_received);
+
+	// 3 bit control state machine of DMA
+	switch (ctl_dma_state)
+	{
+	case(NO_READ_WRITE):
+		if (dma_regs[2] == 0)
+		{
+			//llsim_printf("dma finished\n");
+			dma_opcode_received = false;
+			ctl_dma_state = DMA_IDLE_STATE;
+		}
+
+		else if (mem_available)
+		{
+			llsim_mem_read(sp->sram, dma_regs[0]); //fetch MEM[dma_regs[0]]
+			dma_regs[0]++;
+			ctl_dma_state = ONE_READ_NO_WRITE;
+		}
+		else
+		{
+			ctl_dma_state = NO_READ_WRITE;
+		}
+		break;
+
+	case(ONE_READ_NO_WRITE):
+		if (read_into_reg3)
+		{
+			dma_regs[3] = llsim_mem_extract_dataout(sp->sram, 31, 0);
+			//llsim_printf("ONE_READ_NO_WRITE: dma_regs[3] after extract is: %d\n", dma_regs[3]);
+		}
+		else
+		{
+			dma_regs[4] = llsim_mem_extract_dataout(sp->sram, 31, 0);
+			//llsim_printf("ONE_READ_NO_WRITE: dma_regs[4] after extract is: %d\n", dma_regs[4]);
+
+		}
+		read_into_reg3 = !read_into_reg3; //next, data will be loaded to other register
+		dma_regs[2]--;
+
+		if (dma_regs[2] == 0)  //if length remaining is 0, then no need to keep reading.
+		{
+			ctl_dma_state = ONE_WRITE_READY;
+		}
+		else if (mem_available)
+		{
+			llsim_mem_read(sp->sram, dma_regs[0]);
+			dma_regs[0]++;
+			ctl_dma_state = ONE_READ_ONE_WRITE;
+		}
+		else
+		{
+			ctl_dma_state = ONE_WRITE_READY;
+		}
+
+		break;
+
+	case(ONE_READ_ONE_WRITE):
+		if (read_into_reg3)
+		{
+			dma_regs[3] = llsim_mem_extract_dataout(sp->sram, 31, 0);
+			//llsim_printf("ONE_READ_ONE_WRITE: dma_regs[3] after extract is: %d\n", dma_regs[3]);
+
+		}
+		else
+		{
+			dma_regs[4] = llsim_mem_extract_dataout(sp->sram, 31, 0);
+			//llsim_printf("ONE_READ_ONE_WRITE: dma_regs[4] after extract is: %d\n", dma_regs[4]);
+		}
+		read_into_reg3 = !read_into_reg3; //next, data will be loaded to other register
+		dma_regs[2]--;
+
+		if (mem_available)
+		{
+			int temp_reg; //simulate mux choosing which register to write
+			if (write_reg3)
+			{
+				temp_reg = dma_regs[3];
+			}
+			else
+			{
+				temp_reg = dma_regs[4];
+			}
+			llsim_mem_set_datain(sp->sram, temp_reg, 31, 0);
+			llsim_mem_write(sp->sram, dma_regs[1]);
+			//llsim_printf("ONE_READ_ONE_WRITE: wrote %d to address %d\n", temp_reg, dma_regs[1]);
+			dma_regs[1]++;
+			write_reg3 = !write_reg3; //next, data will be loaded to other register
+			ctl_dma_state = ONE_WRITE_READY;
+		}
+		else
+		{
+			ctl_dma_state = TWO_WRITE_READY;
+		}
+		break;
+
+	case(TWO_WRITE_READY):
+		if (mem_available)
+		{
+			int temp_reg; //simulate mux choosing which register to write
+			if (write_reg3)
+			{
+				temp_reg = dma_regs[3];
+			}
+			else
+			{
+				temp_reg = dma_regs[4];
+			}
+			llsim_mem_set_datain(sp->sram, temp_reg, 31, 0);
+			llsim_mem_write(sp->sram, dma_regs[1]);
+			//llsim_printf("TWO_WRITE_READY: wrote %d to address %d\n", temp_reg, dma_regs[1]);
+			dma_regs[1]++;
+			write_reg3 = !write_reg3; //next, data will be loaded to other register
+			ctl_dma_state = ONE_WRITE_READY;
+		}
+		break;
+	case(ONE_WRITE_READY):
+		if (mem_available)
+		{
+			int temp_reg; //simulate mux choosing which register to write
+			if (write_reg3)
+			{
+				temp_reg = dma_regs[3];
+			}
+			else
+			{
+				temp_reg = dma_regs[4];
+			}
+			llsim_mem_set_datain(sp->sram, temp_reg, 31, 0);
+			llsim_mem_write(sp->sram, dma_regs[1]);
+			//llsim_printf("ONE_WRITE_READY: wrote %d to address %d\n", temp_reg, dma_regs[1]);
+			dma_regs[1]++;
+			write_reg3 = !write_reg3; //next, data will be loaded to other register
+			if (dma_regs[2] == 0)
+			{
+				dma_opcode_received = false;
+				ctl_dma_state = DMA_IDLE_STATE;
+			}
+			ctl_dma_state = NO_READ_WRITE;
+		}
+		break;
+	case(DMA_IDLE_STATE):
+		//llsim_printf("in DMA_IDLE_STATE. dma_opcode_received is: %d\n", dma_opcode_received);
+		if (dma_opcode_received)
+		{
+			ctl_dma_state = NO_READ_WRITE;
+		}
+		break;
+
+
+	}
+
 }
