@@ -323,7 +323,7 @@ static void sp_ctl(sp_t *sp)
 			sprn->dec1_src1 = (spro->dec0_inst & inst_params_src1) >> inst_params_src1_shift;
 			sprn->dec1_src0 = (spro->dec0_inst & inst_params_src0) >> inst_params_src0_shift;
 			sprn->dec1_dst = (spro->dec0_inst & inst_params_dst) >> inst_params_dst_shift;
-			if ((spro->dec1_opcode == LD /*|| spro->dec1_opcode == ST*/) && ((sprn->dec1_src0 == spro->dec1_dst) || (sprn->dec1_src1 == spro->dec1_dst)))
+			if ((spro->dec1_opcode == LD ) && ((sprn->dec1_src0 == spro->dec1_dst) || (sprn->dec1_src1 == spro->dec1_dst)))
 			{
 				raw_hazard = 1;
 			}
@@ -342,7 +342,6 @@ static void sp_ctl(sp_t *sp)
 					{
 						//sp_printf("inst: %d, predicted jump to: %d\n", nr_simulated_instructions, (int)imm);
 						sprn->fetch0_pc = (int)imm;
-						//sprn->r[7] = spro->exec1_pc; //TODO kosta mentioned to check no one overrides r[7], but this is user's responsibility no?
 					}
 					break;
 				case JIN:
@@ -515,47 +514,29 @@ static void sp_ctl(sp_t *sp)
 			 case JEQ:
 			 case JNE:
 				 // If the branch was taken, we need to check if our prediction was right
-				 
 				 if(sprn->exec1_aluout == 1)
 				 {
 					 sp_printf("The branch was taken, inst: %d\n",nr_simulated_instructions);
-					 //If we predicted the branch wasn't taken (wrong), we need to flush fetch1, 
-					 // dec1,dec0 are correct: in branch NT we execute the next instruction
 					 if (spro->fetch1_pc != spro->exec0_immediate)
 					 {
 						 sp_printf("we predicated wrong, flushing\n");
-						 //flush fetch1
-						 //sprn->fetch1_pc = -1;
 						 sprn->fetch0_active = 0;
 						 sprn->fetch1_active = 0;
 						 sprn->dec0_active = 0;
 						 sprn->dec1_active = 0;
 						 sprn->exec0_active = 0;
 						 sprn->exec1_active = 1;
-						 //Correct the error
-						 //sprn->fetch0_pc = spro->exec0_immediate;
-						 //sprn->r[7] = spro->exec0_pc;
+						 //If we had a hazard in the pipeline, it's also flushed
+						 raw_hazard = 0;
 					 }
 					 //If we predicted the branch was taken (right), we need to remove the insts after us, since the prediction is done in dec0
 					 else
 					 {
 						 sp_printf("we were right in the prediction, flushing\n");
-						 //sprn->dec0_active = 0;
 						 sprn->dec1_active = 0;
 						 sprn->exec0_active = 0;
 						 sprn->branch_taken = 1;
-						 /*//flush dec0
-						 sprn->dec0_inst = -1;
-						 sprn->dec0_pc = -1;
 
-						 //flush dec1
-						 sprn->dec1_dst = -1;
-						 sprn->dec1_immediate = -1;
-						 sprn->dec1_inst = -1;
-						 sprn->dec1_opcode = -1;
-						 sprn->dec1_pc = -1;
-						 sprn->dec1_src0 = -1;
-						 sprn->dec1_src1 = -1;*/
 					 }
 					 if (jump_predictors[(spro->exec0_pc % 40)] < 2)
 					 {
@@ -572,14 +553,7 @@ static void sp_ctl(sp_t *sp)
 					 {
 						 sp_printf("we were wrong in the prediction, flushing\n");
 						 sprn->fetch0_active = 0;
-						 //sprn->fetch1_active = 0;
 						 sprn->dec0_active = 0;
-
-						 /*//flush fetch0
-						 sprn->fetch0_pc = -1;
-
-						 //flush fetch1
-						 sprn->fetch1_pc = -1;*/
 					 }
 					 if (jump_predictors[(spro->exec0_pc % 40)] != 0)
 					 {
@@ -701,12 +675,6 @@ static void sp_ctl(sp_t *sp)
 		{
 			llsim_stop();
 			end_trace(inst_trace_fp, nr_simulated_instructions, pc_of_last_inst_executed);
-			/*sprn->fetch0_active = 0;
-			sprn->fetch1_active = 0;
-			sprn->dec0_active = 0;
-			sprn->dec1_active = 0;
-			sprn->exec0_active = 0;
-			sprn->exec1_active = 0;*/
 			ctl_dma_state = DMA_IDLE_STATE;
 			dma_opcode_received = false;
 			fclose(inst_trace_fp);
