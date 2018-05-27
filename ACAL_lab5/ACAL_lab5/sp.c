@@ -201,7 +201,6 @@ void print_all_lines(sp_t* sp, int pc_of_inst, int nr_sim_inst);
 void init_dma_logic(int source, int dest, int amount);
 void perform_dma_logic(bool mem_available, sp_t* sp);
 int predict_jump(int current_pc);
-void flush_pipeline(sp_registers_t** sprn_address);
 bool validate_dma_values(int source, int dest, int amount);
 
 
@@ -216,17 +215,17 @@ static void sp_ctl(sp_t *sp)
 	for (i = 2; i <= 7; i++)
 		fprintf(cycle_trace_fp, "r%d %08x\n", i, spro->r[i]);
 
-	fprintf(cycle_trace_fp, "fetch0_active %08x\n", spro->fetch0_active);
+	fprintf(cycle_trace_fp, "---fetch0_active %08x\n", spro->fetch0_active);
 	fprintf(cycle_trace_fp, "fetch0_pc %08x\n", spro->fetch0_pc);
 
-	fprintf(cycle_trace_fp, "fetch1_active %08x\n", spro->fetch1_active);
+	fprintf(cycle_trace_fp, "---fetch1_active %08x\n", spro->fetch1_active);
 	fprintf(cycle_trace_fp, "fetch1_pc %08x\n", spro->fetch1_pc);
 
-	fprintf(cycle_trace_fp, "dec0_active %08x\n", spro->dec0_active);
+	fprintf(cycle_trace_fp, "---dec0_active %08x\n", spro->dec0_active);
 	fprintf(cycle_trace_fp, "dec0_pc %08x\n", spro->dec0_pc);
 	fprintf(cycle_trace_fp, "dec0_inst %08x\n", spro->dec0_inst); // 32 bits
 
-	fprintf(cycle_trace_fp, "dec1_active %08x\n", spro->dec1_active);
+	fprintf(cycle_trace_fp, "---dec1_active %08x\n", spro->dec1_active);
 	fprintf(cycle_trace_fp, "dec1_pc %08x\n", spro->dec1_pc); // 16 bits
 	fprintf(cycle_trace_fp, "dec1_inst %08x\n", spro->dec1_inst); // 32 bits
 	fprintf(cycle_trace_fp, "dec1_opcode %08x\n", spro->dec1_opcode); // 5 bits
@@ -235,7 +234,7 @@ static void sp_ctl(sp_t *sp)
 	fprintf(cycle_trace_fp, "dec1_dst %08x\n", spro->dec1_dst); // 3 bits
 	fprintf(cycle_trace_fp, "dec1_immediate %08x\n", spro->dec1_immediate); // 32 bits
 
-	fprintf(cycle_trace_fp, "exec0_active %08x\n", spro->exec0_active);
+	fprintf(cycle_trace_fp, "---exec0_active %08x\n", spro->exec0_active);
 	fprintf(cycle_trace_fp, "exec0_pc %08x\n", spro->exec0_pc); // 16 bits
 	fprintf(cycle_trace_fp, "exec0_inst %08x\n", spro->exec0_inst); // 32 bits
 	fprintf(cycle_trace_fp, "exec0_opcode %08x\n", spro->exec0_opcode); // 5 bits
@@ -246,7 +245,7 @@ static void sp_ctl(sp_t *sp)
 	fprintf(cycle_trace_fp, "exec0_alu0 %08x\n", spro->exec0_alu0); // 32 bits
 	fprintf(cycle_trace_fp, "exec0_alu1 %08x\n", spro->exec0_alu1); // 32 bits
 
-	fprintf(cycle_trace_fp, "exec1_active %08x\n", spro->exec1_active);
+	fprintf(cycle_trace_fp, "---exec1_active %08x\n", spro->exec1_active);
 	fprintf(cycle_trace_fp, "exec1_pc %08x\n", spro->exec1_pc); // 16 bits
 	fprintf(cycle_trace_fp, "exec1_inst %08x\n", spro->exec1_inst); // 32 bits
 	fprintf(cycle_trace_fp, "exec1_opcode %08x\n", spro->exec1_opcode); // 5 bits
@@ -257,6 +256,8 @@ static void sp_ctl(sp_t *sp)
 	fprintf(cycle_trace_fp, "exec1_alu0 %08x\n", spro->exec1_alu0); // 32 bits
 	fprintf(cycle_trace_fp, "exec1_alu1 %08x\n", spro->exec1_alu1); // 32 bits
 	fprintf(cycle_trace_fp, "exec1_aluout %08x\n", spro->exec1_aluout);
+	fprintf(cycle_trace_fp, "branch_taken %08x\n", spro->branch_taken);
+	fprintf(cycle_trace_fp, "raw_hazard %08x\n", raw_hazard);
 
 	fprintf(cycle_trace_fp, "\n\n\n");
 
@@ -322,7 +323,7 @@ static void sp_ctl(sp_t *sp)
 			sprn->dec1_src1 = (spro->dec0_inst & inst_params_src1) >> inst_params_src1_shift;
 			sprn->dec1_src0 = (spro->dec0_inst & inst_params_src0) >> inst_params_src0_shift;
 			sprn->dec1_dst = (spro->dec0_inst & inst_params_dst) >> inst_params_dst_shift;
-			if ((spro->dec1_opcode == LD || spro->dec1_opcode == ST) && ((sprn->dec1_src0 == spro->dec1_dst) || (sprn->dec1_src1 == spro->dec1_dst)))
+			if ((spro->dec1_opcode == LD /*|| spro->dec1_opcode == ST*/) && ((sprn->dec1_src0 == spro->dec1_dst) || (sprn->dec1_src1 == spro->dec1_dst)))
 			{
 				raw_hazard = 1;
 			}
@@ -339,7 +340,7 @@ static void sp_ctl(sp_t *sp)
 				case JNE:
 					if (predict_jump(spro->dec0_pc))
 					{
-						sp_printf("inst: %d, predicted jump to: %d\n", nr_simulated_instructions, (int)imm);
+						//sp_printf("inst: %d, predicted jump to: %d\n", nr_simulated_instructions, (int)imm);
 						sprn->fetch0_pc = (int)imm;
 						//sprn->r[7] = spro->exec1_pc; //TODO kosta mentioned to check no one overrides r[7], but this is user's responsibility no?
 					}
@@ -370,6 +371,7 @@ static void sp_ctl(sp_t *sp)
 			else
 			{
 				sprn->exec0_alu0 = (spro->dec1_src0) ? spro->r[spro->dec1_src0] : R0;
+				sp_printf("In dec1, sprn->exec0_alu0 = %d, exec0_alu0 = %d, exec0_alu1 = %d\n", sprn->exec0_alu0, spro->exec0_alu0, spro->exec0_alu1);
 			}
 
 			if (spro->dec1_src1 == 1)
@@ -394,7 +396,7 @@ static void sp_ctl(sp_t *sp)
 	// exec0
 	sprn->exec1_active = 0;	  //TODO make sure handles polling also. same as ex2.
 	if (spro->exec0_active) {
-
+		sprn->branch_taken = 0;
 		switch (spro->exec0_opcode)
 		{
 		case ADD:
@@ -407,6 +409,7 @@ static void sp_ctl(sp_t *sp)
 
 		case LSF:
 			sprn->exec1_aluout = spro->exec0_alu0 << spro->exec0_alu1;
+			//sp_printf("In exec0, exec1_aluout = %d, exec0_alu0 = %d, exec0_alu1 = %d\n", sprn->exec1_aluout, spro->exec0_alu0, spro->exec0_alu1);
 			break;
 
 		case RSF:
@@ -458,6 +461,7 @@ static void sp_ctl(sp_t *sp)
 
 		case JEQ:
 			sprn->exec1_aluout = spro->exec0_alu0 == spro->exec0_alu1;
+			sp_printf("In exec0, exec1_aluout = %d, exec0_alu0 = %d, exec0_alu1 = %d\n", sprn->exec1_aluout, spro->exec0_alu0, spro->exec0_alu1);
 			break;
 
 		case JNE:
@@ -475,6 +479,8 @@ static void sp_ctl(sp_t *sp)
 		case HLT:
 			break;
 		}
+
+		sp_printf("In exec0, exec1_aluout = %d\n", sprn->exec1_aluout);
 		//checking if we need to forward ALU and checking the branch prediction
 		switch (spro->exec0_opcode)
 		{
@@ -492,14 +498,14 @@ static void sp_ctl(sp_t *sp)
 						if(spro->exec0_dst==spro->dec1_src0) // forwarding ALU to ALU
 						{
 							sprn->exec0_alu0 = sprn->exec1_aluout;
-							sp_printf("forwarding ALU to ALU: exec0_alu0 = %d\n", sprn->exec1_aluout);
+							//sp_printf("forwarding ALU to ALU: exec0_alu0 = %d\n", sprn->exec1_aluout);
 						}
 
 
 						if(spro->exec0_dst==spro->dec1_src1) // forwarding ALU to ALU
 						{
 							sprn->exec0_alu1 = sprn->exec1_aluout;
-							sp_printf("forwarding ALU to ALU: exec0_alu1 = %d\n", sprn->exec1_aluout);
+							//sp_printf("forwarding ALU to ALU: exec0_alu1 = %d\n", sprn->exec1_aluout);
 				 		}
 				 	}
 				
@@ -509,15 +515,15 @@ static void sp_ctl(sp_t *sp)
 			 case JEQ:
 			 case JNE:
 				 // If the branch was taken, we need to check if our prediction was right
-				 sprn->branch_taken = 0;
+				 
 				 if(sprn->exec1_aluout == 1)
 				 {
-					 sp_printf("predicted branch taken, inst: %d\n",nr_simulated_instructions);
+					 sp_printf("The branch was taken, inst: %d\n",nr_simulated_instructions);
 					 //If we predicted the branch wasn't taken (wrong), we need to flush fetch1, 
 					 // dec1,dec0 are correct: in branch NT we execute the next instruction
 					 if (spro->fetch1_pc != spro->exec0_immediate)
 					 {
-						 sp_printf("we were wrong in the prediction, flushing\n");
+						 sp_printf("we predicated wrong, flushing\n");
 						 //flush fetch1
 						 //sprn->fetch1_pc = -1;
 						 sprn->fetch0_active = 0;
@@ -556,14 +562,17 @@ static void sp_ctl(sp_t *sp)
 						 jump_predictors[(spro->exec0_pc % 40)]++;
 					 }
 				 }
+				 
 				 else //if branch is not taken
 				 {
+					 sp_printf("the branch was not taken\n");
 					 // If we predicted not taken and the branch was indeed not taken, we don't need to do anything
 					 // If we predicted branch taken (wrong), fetch1 pc will be our immediate, and so we flush
 					 if (spro->fetch1_pc == spro->exec0_immediate)
 					 {
+						 sp_printf("we were wrong in the prediction, flushing\n");
 						 sprn->fetch0_active = 0;
-						 sprn->fetch1_active = 0;
+						 //sprn->fetch1_active = 0;
 						 sprn->dec0_active = 0;
 
 						 /*//flush fetch0
@@ -618,20 +627,15 @@ static void sp_ctl(sp_t *sp)
 				if (spro->exec1_dst == spro->dec1_src0 && spro->dec1_opcode != ST)
 				{
 					sprn->exec0_alu0 = data_extracted;
-					sp_printf("forwarding LD to ALU: exec0_alu0 = %d\n", data_extracted);
+					//sp_printf("forwarding LD to ALU: exec0_alu0 = %d\n", data_extracted);
 				}
 				// FORWARD: LD -> ALU
 				if (spro->exec1_dst == spro->dec1_src1 && spro->dec1_opcode != ST)
 				{
 					sprn->exec0_alu1 = data_extracted;
-					sp_printf("forwarding LD to ALU: exec0_alu0 = %d\n", data_extracted);
+					//sp_printf("forwarding LD to ALU: exec0_alu0 = %d\n", data_extracted);
 				}
 			}
-		
-		 	break;
-	 	case ST:
-	 		break;
-	 	case HLT:
 	 		break;
 	 	case JLT:
 	 	case JLE:
@@ -697,12 +701,12 @@ static void sp_ctl(sp_t *sp)
 		{
 			llsim_stop();
 			end_trace(inst_trace_fp, nr_simulated_instructions, pc_of_last_inst_executed);
-			sprn->fetch0_active = 0;
+			/*sprn->fetch0_active = 0;
 			sprn->fetch1_active = 0;
 			sprn->dec0_active = 0;
 			sprn->dec1_active = 0;
 			sprn->exec0_active = 0;
-			sprn->exec1_active = 0;
+			sprn->exec1_active = 0;*/
 			ctl_dma_state = DMA_IDLE_STATE;
 			dma_opcode_received = false;
 			fclose(inst_trace_fp);
@@ -1231,26 +1235,6 @@ int predict_jump(int current_pc)
 {
 	int table_value = jump_predictors[(current_pc % 40)]; //check what's the current pc prediction
 	return table_value > 1; //simulate 2 bit prediction
-}
-
-void flush_pipeline(sp_registers_t** sprn_address)
-{
-	sp_registers_t* sprn = *sprn_address;
-	//flush fetch1
-	sprn->fetch1_pc = -1;
-	
-	//flush dec0
-	sprn->dec0_inst = -1;
-	sprn->dec0_pc = -1;
-	
-	//flush dec1
-	sprn->dec1_dst = -1;
-	sprn->dec1_immediate = -1;
-	sprn->dec1_inst = -1;
-	sprn->dec1_opcode = -1;
-	sprn->dec1_pc = -1;
-	sprn->dec1_src0 = -1;
-	sprn->dec1_src1 = -1;
 }
 
 bool validate_dma_values(int source, int dest, int amount)
