@@ -329,19 +329,23 @@ static void sp_ctl(sp_t *sp)
 			sprn->dec1_pc = spro->dec0_pc;
 			sprn->dec1_inst = spro->dec0_inst;
 
-			//in case of jumping
+			// Jump prediction
 			switch (opcode)
 			{
 				case JLT:
 				case JLE:
 				case JEQ:
 				case JNE:
-				case JIN:
 					if (predict_jump(spro->dec0_pc))
 					{
 						sprn->fetch0_pc = (int)imm;
 						sprn->r[7] = spro->exec1_pc; //TODO kosta mentioned to check no one overrides r[7], but this is user's responsibility no?
 					}
+					break;
+				case JIN:
+					sprn->fetch0_pc = (int)imm;
+					sprn->r[7] = spro->exec1_pc;
+					break;
 
 			}
 		}
@@ -469,7 +473,7 @@ static void sp_ctl(sp_t *sp)
 		case HLT:
 			break;
 		}
-		//checking if we need to forward ALU
+		//checking if we need to forward ALU and checking the branch prediction
 		switch (spro->exec0_opcode)
 		{
 			case ADD:
@@ -485,24 +489,59 @@ static void sp_ctl(sp_t *sp)
 						if(spro->exec0_dst==spro->dec1_src0) // forwarding ALU to ALU
 						{
 							sprn->exec0_alu0 = sprn->exec1_aluout;
+							sp_printf("forwarding ALU to ALU: exec0_alu0 = %d\n", sprn->exec1_aluout);
 						}
+
 
 						if(spro->exec0_dst==spro->dec1_src1) // forwarding ALU to ALU
 						{
 							sprn->exec0_alu1 = sprn->exec1_aluout;
+							sp_printf("forwarding ALU to ALU: exec0_alu1 = %d\n", sprn->exec1_aluout);
 				 		}
 				 	}
-				 	break;
+				
+				break;
 			case JLT:
 			 case JLE:
 			 case JEQ:
 			 case JNE:
-			 case JIN:
+				 // If the branch was taken, we need to check if our prediction was right
 				 if(sprn->exec1_aluout == 1)
 				 {
+					 //If we predicted the branch wasn't taken (wrong), we need to flush fetch1, 
+					 // dec1,dec0 are correct: in branch NT we execute the next instruction
 					 if (spro->fetch1_pc != spro->exec0_immediate)
 					 {
-						 flush_pipeline(&sprn);
+						 //flush fetch1
+						 //sprn->fetch1_pc = -1;
+						 sprn->fetch0_active = 0;
+						 sprn->fetch1_active = 0;
+						 sprn->dec0_active = 0;
+						 sprn->dec1_active = 0;
+						 sprn->exec0_active = 0;
+						 sprn->exec1_active = 1;
+						 //Correct the error
+						 //sprn->fetch0_pc = spro->exec0_immediate;
+						 //sprn->r[7] = spro->exec0_pc;
+					 }
+					 //If we predicted the branch was taken (right), we need to remove the insts after us, since the prediction is done in dec0
+					 else
+					 {
+						 sprn->dec0_active = 0;
+						 sprn->dec1_active = 0;
+						 
+						 /*//flush dec0
+						 sprn->dec0_inst = -1;
+						 sprn->dec0_pc = -1;
+
+						 //flush dec1
+						 sprn->dec1_dst = -1;
+						 sprn->dec1_immediate = -1;
+						 sprn->dec1_inst = -1;
+						 sprn->dec1_opcode = -1;
+						 sprn->dec1_pc = -1;
+						 sprn->dec1_src0 = -1;
+						 sprn->dec1_src1 = -1;*/
 					 }
 					 if (jump_predictors[(spro->exec0_pc % 40)] < 2)
 					 {
@@ -511,24 +550,26 @@ static void sp_ctl(sp_t *sp)
 				 }
 				 else //if branch is not taken
 				 {
+					 // If we predicted not taken and the branch was indeed not taken, we don't need to do anything
+					 // If we predicted branch taken (wrong), fetch1 pc will be our immediate, and so we flush
 					 if (spro->fetch1_pc == spro->exec0_immediate)
 					 {
-						 flush_pipeline(&sprn);
+						 sprn->fetch0_active = 0;
+						 sprn->fetch1_active = 0;
+						 sprn->dec0_active = 0;
+
+						 /*//flush fetch0
+						 sprn->fetch0_pc = -1;
+
+						 //flush fetch1
+						 sprn->fetch1_pc = -1;*/
 					 }
 					 if (jump_predictors[(spro->exec0_pc % 40)] != 0)
 					 {
 						 jump_predictors[(spro->exec0_pc % 40)]--;
 					 }
 				 }
-			 case ST:
-				 if (sprn->exec0_src0 == spro->exec0_dst)  //FW ALU result to store
-				 {
-					 sprn->exec0_alu0 = sprn->exec1_aluout;
-				 }
-				 if (sprn->exec0_src1 == spro->exec0_dst)
-				 {
-					 sprn->exec0_alu1 = sprn->exec1_aluout;
-				 }
+
 				 default:
 					
 				 	break;
@@ -542,13 +583,15 @@ static void sp_ctl(sp_t *sp)
 		sprn->exec1_dst = spro->exec0_dst;
 		sprn->exec1_immediate = spro->exec0_immediate;
 		sprn->exec1_alu0 = spro->exec0_alu0;
-
-		if (spro->dec1_src0 == spro->exec0_dst || spro->dec1_src1 == spro->exec0_dst)
+		sprn->exec1_alu1 = spro->exec0_alu1;
+		
+		//Turning off the hazard only for ST and LD, after we forwarded
+		if ((spro->dec1_src0 == spro->exec0_dst || spro->dec1_src1 == spro->exec0_dst) && (spro->exec0_opcode == LD || spro->exec0_opcode == ST))
 		{
 			raw_hazard = 0;
 		}
 
-		sprn->exec1_alu1 = spro->exec0_alu1;			 
+				 
 		
 		sprn->exec1_active = 1;
 	}
@@ -564,14 +607,16 @@ static void sp_ctl(sp_t *sp)
 			{
 				sprn->r[spro->exec1_dst] = data_extracted;
 				// FORWARD: LD -> ALU
-				if (spro->exec1_dst == spro->dec1_src0) 
+				if (spro->exec1_dst == spro->dec1_src0 && spro->dec1_opcode != ST)
 				{
 					sprn->exec0_alu0 = data_extracted;
+					sp_printf("forwarding LD to ALU: exec0_alu0 = %d\n", data_extracted);
 				}
 				// FORWARD: LD -> ALU
-				if (spro->exec1_dst == spro->dec1_src1) 
+				if (spro->exec1_dst == spro->dec1_src1 && spro->dec1_opcode != ST)
 				{
 					sprn->exec0_alu1 = data_extracted;
+					sp_printf("forwarding LD to ALU: exec0_alu0 = %d\n", data_extracted);
 				}
 			}
 		
@@ -583,17 +628,17 @@ static void sp_ctl(sp_t *sp)
 	 	case JLT:
 	 	case JLE:
 	 	case JEQ:
-	 	case JNE:	 		
-	 		if(spro->exec1_aluout)
+	 	case JNE:	 
+			if(spro->exec1_aluout)
 	 		{
-	 			sprn->fetch0_pc = spro->exec1_immediate - 1;
+	 			sprn->fetch0_pc = spro->exec1_immediate;
 	 			sprn->r[7] = spro->exec1_pc;
 	 		}
 	 		break;
 	 	case JIN:
 	 		if(spro->exec1_aluout)
 	 		{
-	 			sprn->fetch0_pc = spro->exec1_alu0 - 1;
+	 			sprn->fetch0_pc = spro->exec1_alu0;
 	 			sprn->r[7] = spro->exec1_pc;
 	 		}
 	 		break;
@@ -625,6 +670,7 @@ static void sp_ctl(sp_t *sp)
 		 	break;
 		}
 
+		// Printing inst trace
 		if (pc_of_last_inst_executed != spro->exec1_pc)
 		{
 			if (pc_of_last_inst_executed != -1 || spro->exec1_pc == 0)
@@ -634,11 +680,17 @@ static void sp_ctl(sp_t *sp)
 			}
 			pc_of_last_inst_executed = spro->exec1_pc;
 		}
+		
 		if(spro->exec1_opcode == HLT)
 		{
 			llsim_stop();
 			end_trace(inst_trace_fp, nr_simulated_instructions, pc_of_last_inst_executed);
-
+			sprn->fetch0_active = 0;
+			sprn->fetch1_active = 0;
+			sprn->dec0_active = 0;
+			sprn->dec1_active = 0;
+			sprn->exec0_active = 0;
+			sprn->exec1_active = 0;
 			ctl_dma_state = DMA_IDLE_STATE;
 			dma_opcode_received = false;
 			fclose(inst_trace_fp);
@@ -867,6 +919,7 @@ int print_line5(FILE* file, sp_t* sp)
 
 	int check_ret = 0;
 	char line_to_print[MAX_STR_LEN];
+	int jump_dst;
 
 	switch (sp->spro->exec1_opcode)
 	{
@@ -916,12 +969,13 @@ int print_line5(FILE* file, sp_t* sp)
 		case JLE:
 		case JEQ:
 		case JNE:
+			jump_dst = sp->spro->exec1_aluout ? sp->spro->exec1_immediate : sp->spro->exec1_pc + 1;
 			check_ret = sprintf(line_to_print,
 				">>>> EXEC: %s %d, %d, %d <<<<\n\n",
 				opcode_name[sp->spro->exec1_opcode],
 				sp->spro->exec1_alu0,
 				sp->spro->exec1_alu1,
-				sp->sprn->exec1_pc
+				jump_dst
 			);
 			break;
 
