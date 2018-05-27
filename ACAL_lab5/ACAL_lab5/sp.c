@@ -71,6 +71,7 @@ typedef struct sp_registers_s {
 	int exec1_alu0; // 32 bits
 	int exec1_alu1; // 32 bits
 	int exec1_aluout;
+	int branch_taken; //flag for when we predicted a jump, and it's indeed taken, so we don't jump it twice
 } sp_registers_t;
 
 /*
@@ -338,13 +339,14 @@ static void sp_ctl(sp_t *sp)
 				case JNE:
 					if (predict_jump(spro->dec0_pc))
 					{
+						sp_printf("inst: %d, predicted jump to: %d\n", nr_simulated_instructions, (int)imm);
 						sprn->fetch0_pc = (int)imm;
-						sprn->r[7] = spro->exec1_pc; //TODO kosta mentioned to check no one overrides r[7], but this is user's responsibility no?
+						//sprn->r[7] = spro->exec1_pc; //TODO kosta mentioned to check no one overrides r[7], but this is user's responsibility no?
 					}
 					break;
 				case JIN:
 					sprn->fetch0_pc = (int)imm;
-					sprn->r[7] = spro->exec1_pc;
+					//sprn->r[7] = spro->exec1_pc;
 					break;
 
 			}
@@ -484,6 +486,7 @@ static void sp_ctl(sp_t *sp)
 			case OR:
 			case XOR:
 			case LHI:
+				// Forwarding
 				if(spro->exec0_dst > 1 && spro->exec0_dst < 8)
 					{
 						if(spro->exec0_dst==spro->dec1_src0) // forwarding ALU to ALU
@@ -506,12 +509,15 @@ static void sp_ctl(sp_t *sp)
 			 case JEQ:
 			 case JNE:
 				 // If the branch was taken, we need to check if our prediction was right
+				 sprn->branch_taken = 0;
 				 if(sprn->exec1_aluout == 1)
 				 {
+					 sp_printf("predicted branch taken, inst: %d\n",nr_simulated_instructions);
 					 //If we predicted the branch wasn't taken (wrong), we need to flush fetch1, 
 					 // dec1,dec0 are correct: in branch NT we execute the next instruction
 					 if (spro->fetch1_pc != spro->exec0_immediate)
 					 {
+						 sp_printf("we were wrong in the prediction, flushing\n");
 						 //flush fetch1
 						 //sprn->fetch1_pc = -1;
 						 sprn->fetch0_active = 0;
@@ -527,9 +533,11 @@ static void sp_ctl(sp_t *sp)
 					 //If we predicted the branch was taken (right), we need to remove the insts after us, since the prediction is done in dec0
 					 else
 					 {
-						 sprn->dec0_active = 0;
+						 sp_printf("we were right in the prediction, flushing\n");
+						 //sprn->dec0_active = 0;
 						 sprn->dec1_active = 0;
-						 
+						 sprn->exec0_active = 0;
+						 sprn->branch_taken = 1;
 						 /*//flush dec0
 						 sprn->dec0_inst = -1;
 						 sprn->dec0_pc = -1;
@@ -631,14 +639,18 @@ static void sp_ctl(sp_t *sp)
 	 	case JNE:	 
 			if(spro->exec1_aluout)
 	 		{
-	 			sprn->fetch0_pc = spro->exec1_immediate;
+				// Only if we haven't already predicted the branch, we branch
+				if (spro->branch_taken == 0)
+				{
+					sprn->fetch0_pc = spro->exec1_immediate;
+				}
 	 			sprn->r[7] = spro->exec1_pc;
 	 		}
 	 		break;
 	 	case JIN:
 	 		if(spro->exec1_aluout)
 	 		{
-	 			sprn->fetch0_pc = spro->exec1_alu0;
+	 			//sprn->fetch0_pc = spro->exec1_alu0;
 	 			sprn->r[7] = spro->exec1_pc;
 	 		}
 	 		break;
@@ -1030,8 +1042,8 @@ int end_trace(FILE* file, int cnt, int pc)
 
 	check_ret = sprintf(line_to_print,
 		"sim finished at pc %d, %d instructions",
-		pc + 1,
-		cnt + 1
+		pc,
+		cnt
 	);
 
 	if (check_ret < 0)
