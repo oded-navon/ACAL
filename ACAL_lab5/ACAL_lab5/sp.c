@@ -350,13 +350,11 @@ static void sp_ctl(sp_t *sp)
 				case JNE:
 					if (predict_jump(spro->dec0_pc))
 					{
-						//sp_printf("inst: %d, predicted jump to: %d\n", nr_simulated_instructions, (int)imm);
 						sprn->fetch0_pc = (int)imm;
 					}
 					break;
 				case JIN:
 					sprn->fetch0_pc = (int)imm;
-					//sprn->r[7] = spro->exec1_pc;
 					break;
 
 			}
@@ -376,7 +374,6 @@ static void sp_ctl(sp_t *sp)
 			else
 			{
 				sprn->exec0_alu0 = (spro->dec1_src0) ? spro->r[spro->dec1_src0] : R0;
-				sp_printf("In dec1, sprn->exec0_alu0 = %d, exec0_alu0 = %d, exec0_alu1 = %d\n", sprn->exec0_alu0, spro->exec0_alu0, spro->exec0_alu1);
 			}
 
 			if (spro->dec1_src1 == 1)
@@ -427,7 +424,6 @@ static void sp_ctl(sp_t *sp)
 
 			case LSF:
 				sprn->exec1_aluout = spro->exec0_alu0 << spro->exec0_alu1;
-				//sp_printf("In exec0, exec1_aluout = %d, exec0_alu0 = %d, exec0_alu1 = %d\n", sprn->exec1_aluout, spro->exec0_alu0, spro->exec0_alu1);
 				break;
 
 			case RSF:
@@ -479,7 +475,6 @@ static void sp_ctl(sp_t *sp)
 
 			case JEQ:
 				sprn->exec1_aluout = spro->exec0_alu0 == spro->exec0_alu1;
-				//sp_printf("In exec0, exec1_aluout = %d, exec0_alu0 = %d, exec0_alu1 = %d\n", sprn->exec1_aluout, spro->exec0_alu0, spro->exec0_alu1);
 				break;
 
 			case JNE:
@@ -501,7 +496,6 @@ static void sp_ctl(sp_t *sp)
 				break;
 			}
 
-			//sp_printf("In exec0, exec1_aluout = %d\n", sprn->exec1_aluout);
 			//checking if we need to forward ALU and checking the branch prediction
 			switch (spro->exec0_opcode)
 			{
@@ -519,13 +513,11 @@ static void sp_ctl(sp_t *sp)
 					if (spro->exec0_dst == spro->dec1_src0) // forwarding ALU to ALU
 					{
 						sprn->exec0_alu0 = sprn->exec1_aluout;
-						//sp_printf("forwarding ALU to ALU: exec0_alu0 = %d\n", sprn->exec1_aluout);
 					}
 
 					if (spro->exec0_dst == spro->dec1_src1) // forwarding ALU to ALU
 					{
 						sprn->exec0_alu1 = sprn->exec1_aluout;
-						//sp_printf("forwarding ALU to ALU: exec0_alu1 = %d\n", sprn->exec1_aluout);
 					}
 				}
 				if (spro->dec1_opcode == DMA)
@@ -533,7 +525,6 @@ static void sp_ctl(sp_t *sp)
 					if (spro->exec0_dst == spro->dec1_dst) // forwarding ALU to DMA
 					{
 						sprn->exec0_alu1 = sprn->exec1_aluout;
-						sp_printf("forwarding ALU to DMA from exec0: exec0_alu1 = %d\n", sprn->exec1_aluout);
 					}
 				}
 
@@ -545,10 +536,8 @@ static void sp_ctl(sp_t *sp)
 				// If the branch was taken, we need to check if our prediction was right
 				if (sprn->exec1_aluout == 1)
 				{
-					sp_printf("The branch was taken, inst: %d\n", nr_simulated_instructions);
 					if (spro->fetch1_pc != spro->exec0_immediate)
 					{
-						sp_printf("we predicated wrong, flushing\n");
 						sprn->fetch0_active = 0;
 						sprn->fetch1_active = 0;
 						sprn->dec0_active = 0;
@@ -561,7 +550,6 @@ static void sp_ctl(sp_t *sp)
 					//If we predicted the branch was taken (right), we need to remove the insts after us, since the prediction is done in dec0
 					else
 					{
-						sp_printf("we were right in the prediction, flushing\n");
 						sprn->dec1_active = 0;
 						sprn->exec0_active = 0;
 						sprn->branch_taken = 1;
@@ -575,13 +563,10 @@ static void sp_ctl(sp_t *sp)
 
 				else //if branch is not taken
 				{
-					sp_printf("the branch was not taken\n");
 					// If we predicted not taken and the branch was indeed not taken, we don't need to do anything
 					// If we predicted branch taken (wrong), fetch1 pc will be our immediate, and so we flush
 					if (spro->fetch1_pc == spro->exec0_immediate)
 					{
-						sp_printf("we were wrong in the prediction, flushing\n");
-						//sprn->fetch0_active = 0;
 						sprn->fetch0_pc = spro->dec0_pc + 1;
 						sprn->fetch1_active = 0;
 						sprn->dec0_active = 0;
@@ -624,31 +609,28 @@ static void sp_ctl(sp_t *sp)
 		switch(spro->exec1_opcode)
 		{
 		case LD:
-			//mem_available = false;
 			data_extracted = llsim_mem_extract_dataout(sp->sramd, 31, 0);		
 			if(spro->exec1_dst > 1 && spro->exec1_dst < 8)
 			{
 				sprn->r[spro->exec1_dst] = data_extracted;
 				// FORWARD: LD -> ALU
-				if (spro->exec1_dst == spro->dec1_src0)// && spro->exec0_dst != spro->dec1_src0)
+				if (spro->exec1_dst == spro->dec1_src0)
 				{
 					sprn->exec0_alu0 = data_extracted;
 					if (spro->exec0_pc == spro->exec1_pc)
 					{
 						sprn->exec1_active = 0; 
 					}
-					//sp_printf("forwarding LD to ALU: exec0_alu0 = %d\n", data_extracted);// || spro->exec1_pc == spro->exec0_pc)
 				}
 				// FORWARD: LD -> ALU
 				
-				if (spro->exec1_dst == spro->dec1_src1)// && spro->exec0_dst != spro->dec1_src1)
+				if (spro->exec1_dst == spro->dec1_src1)
 				{
 					sprn->exec0_alu1 = data_extracted;
 					if (spro->exec0_pc == spro->exec1_pc)
 					{
 						sprn->exec1_active = 0;
 					}
-					//sp_printf("forwarding LD to ALU: exec0_alu0 = %d\n", data_extracted);
 				}
 
 				if (spro->dec1_opcode == DMA)
@@ -656,7 +638,6 @@ static void sp_ctl(sp_t *sp)
 					if (spro->exec1_dst == spro->dec1_dst) // forwarding ALU to DMA
 					{
 						sprn->exec0_alu1 = spro->exec1_aluout;
-						sp_printf("forwarding LD to DMA from exec1: exec0_alu1 = %d\n", sprn->exec1_aluout);
 					}
 				}
 			}
@@ -678,7 +659,6 @@ static void sp_ctl(sp_t *sp)
 	 	case JIN:
 	 		if(spro->exec1_aluout)
 	 		{
-	 			//sprn->fetch0_pc = spro->exec1_alu0;
 	 			sprn->r[7] = spro->exec1_pc;
 	 		}
 	 		break;
@@ -710,7 +690,6 @@ static void sp_ctl(sp_t *sp)
 					if (spro->exec1_dst == spro->dec1_dst) // forwarding ALU to DMA
 					{
 						sprn->exec0_alu1 = spro->exec1_aluout;
-						sp_printf("forwarding ALU to DMA from exec1: exec0_alu1 = %d\n", sprn->exec1_aluout);
 					}
 				}
 			}
@@ -720,11 +699,6 @@ static void sp_ctl(sp_t *sp)
 			break;
 		default:
 		 	break;
-		}
-
-		if (nr_simulated_instructions == 47)
-		{
-			sp_printf("\n\n\n\n---------------------------- HERE -----------------------------\n\n\n\n");
 		}
 
 		// Printing inst trace
@@ -754,7 +728,6 @@ static void sp_ctl(sp_t *sp)
 
 	if (dma_opcode_received)
 	{
-		//llsim_printf("dma received\n");
 		perform_dma_logic(mem_available, sp);
 	}
 }
@@ -936,7 +909,7 @@ int print_line3(FILE* file, sp_registers_t* inst_regs)
 	return return_value;
 }
 
-int print_line4(FILE* file, sp_registers_t* inst_regs)//, int* old_regs)
+int print_line4(FILE* file, sp_registers_t* inst_regs)
 {
 	int return_value = SUCCESS;
 
@@ -945,10 +918,10 @@ int print_line4(FILE* file, sp_registers_t* inst_regs)//, int* old_regs)
 
 	check_ret = sprintf(line_to_print,
 		"r[4] = %08x r[5] = %08x r[6] = %08x r[7] = %08x\n\n",
-		inst_regs->r[4],//old_regs[4],
-		inst_regs->r[5],//old_regs[5],
-		inst_regs->r[6],//old_regs[6],
-		inst_regs->r[7]//old_regs[7]
+		inst_regs->r[4],
+		inst_regs->r[5],
+		inst_regs->r[6],
+		inst_regs->r[7]
 	);
 
 	if (check_ret < 0)
@@ -1122,22 +1095,16 @@ void init_dma_logic(int source, int dest, int amount)
 	dma_regs[1] = dest;
 	dma_regs[2] = amount;
 	dma_opcode_received = true;
-	//printf("dma_regs[0]: %d, dma_regs[1]: %d, and dma_regs[2]: %d\n", dma_regs[0], dma_regs[1], dma_regs[2]);
 }
 
 void perform_dma_logic(bool mem_available, sp_t* sp)
 {
-	//llsim_printf("dma state %d and sp is %d\n", ctl_dma_state, sp->spro->ctl_state);
-	//llsim_printf("dma_regs[2] is %d and mem_available is %d\n", dma_regs[2], mem_available);
-	//llsim_printf("read_into_reg3 is %d and write_reg3 is %d. dma_opcode_received is %d\n\n", read_into_reg3, write_reg3, dma_opcode_received);
-
 	// 3 bit control state machine of DMA
 	switch (ctl_dma_state)
 	{
 	case(NO_READ_WRITE):
 		if (dma_regs[2] == 0)
 		{
-			//llsim_printf("dma finished\n");
 			dma_opcode_received = false;
 			ctl_dma_state = DMA_IDLE_STATE;
 		}
@@ -1158,13 +1125,10 @@ void perform_dma_logic(bool mem_available, sp_t* sp)
 		if (read_into_reg3)
 		{
 			dma_regs[3] = llsim_mem_extract_dataout(sp->sramd, 31, 0);
-			//llsim_printf("ONE_READ_NO_WRITE: dma_regs[3] after extract is: %d\n", dma_regs[3]);
 		}
 		else
 		{
 			dma_regs[4] = llsim_mem_extract_dataout(sp->sramd, 31, 0);
-			//llsim_printf("ONE_READ_NO_WRITE: dma_regs[4] after extract is: %d\n", dma_regs[4]);
-
 		}
 		read_into_reg3 = !read_into_reg3; //next, data will be loaded to other register
 		dma_regs[2]--;
@@ -1190,13 +1154,10 @@ void perform_dma_logic(bool mem_available, sp_t* sp)
 		if (read_into_reg3)
 		{
 			dma_regs[3] = llsim_mem_extract_dataout(sp->sramd, 31, 0);
-			//llsim_printf("ONE_READ_ONE_WRITE: dma_regs[3] after extract is: %d\n", dma_regs[3]);
-
 		}
 		else
 		{
 			dma_regs[4] = llsim_mem_extract_dataout(sp->sramd, 31, 0);
-			//llsim_printf("ONE_READ_ONE_WRITE: dma_regs[4] after extract is: %d\n", dma_regs[4]);
 		}
 		read_into_reg3 = !read_into_reg3; //next, data will be loaded to other register
 		dma_regs[2]--;
@@ -1214,7 +1175,6 @@ void perform_dma_logic(bool mem_available, sp_t* sp)
 			}
 			llsim_mem_set_datain(sp->sramd, temp_reg, 31, 0);
 			llsim_mem_write(sp->sramd, dma_regs[1]);
-			//llsim_printf("ONE_READ_ONE_WRITE: wrote %d to address %d\n", temp_reg, dma_regs[1]);
 			dma_regs[1]++;
 			write_reg3 = !write_reg3; //next, data will be loaded to other register
 			ctl_dma_state = ONE_WRITE_READY;
@@ -1239,7 +1199,6 @@ void perform_dma_logic(bool mem_available, sp_t* sp)
 			}
 			llsim_mem_set_datain(sp->sramd, temp_reg, 31, 0);
 			llsim_mem_write(sp->sramd, dma_regs[1]);
-			//llsim_printf("TWO_WRITE_READY: wrote %d to address %d\n", temp_reg, dma_regs[1]);
 			dma_regs[1]++;
 			write_reg3 = !write_reg3; //next, data will be loaded to other register
 			ctl_dma_state = ONE_WRITE_READY;
@@ -1259,7 +1218,6 @@ void perform_dma_logic(bool mem_available, sp_t* sp)
 			}
 			llsim_mem_set_datain(sp->sramd, temp_reg, 31, 0);
 			llsim_mem_write(sp->sramd, dma_regs[1]);
-			//llsim_printf("ONE_WRITE_READY: wrote %d to address %d\n", temp_reg, dma_regs[1]);
 			dma_regs[1]++;
 			write_reg3 = !write_reg3; //next, data will be loaded to other register
 			if (dma_regs[2] == 0)
@@ -1271,7 +1229,6 @@ void perform_dma_logic(bool mem_available, sp_t* sp)
 		}
 		break;
 	case(DMA_IDLE_STATE):
-		//llsim_printf("in DMA_IDLE_STATE. dma_opcode_received is: %d\n", dma_opcode_received);
 		if (dma_opcode_received)
 		{
 			ctl_dma_state = NO_READ_WRITE;
@@ -1292,6 +1249,5 @@ int predict_jump(int current_pc)
 bool validate_dma_values(int source, int dest, int amount)
 {
 	bool res = (amount > 0) && (source >= 0) && (dest >= 0) && (source != dest);
-	//printf("res: %d", res);
 	return res;
 }
