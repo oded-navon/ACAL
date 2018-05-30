@@ -460,7 +460,7 @@ static void sp_ctl(sp_t *sp)
 
 		case JEQ:
 			sprn->exec1_aluout = spro->exec0_alu0 == spro->exec0_alu1;
-			sp_printf("In exec0, exec1_aluout = %d, exec0_alu0 = %d, exec0_alu1 = %d\n", sprn->exec1_aluout, spro->exec0_alu0, spro->exec0_alu1);
+			//sp_printf("In exec0, exec1_aluout = %d, exec0_alu0 = %d, exec0_alu1 = %d\n", sprn->exec1_aluout, spro->exec0_alu0, spro->exec0_alu1);
 			break;
 
 		case JNE:
@@ -499,7 +499,6 @@ static void sp_ctl(sp_t *sp)
 							sprn->exec0_alu0 = sprn->exec1_aluout;
 							//sp_printf("forwarding ALU to ALU: exec0_alu0 = %d\n", sprn->exec1_aluout);
 						}
-
 
 						if(spro->exec0_dst==spro->dec1_src1) // forwarding ALU to ALU
 						{
@@ -552,7 +551,9 @@ static void sp_ctl(sp_t *sp)
 					 if (spro->fetch1_pc == spro->exec0_immediate)
 					 {
 						 sp_printf("we were wrong in the prediction, flushing\n");
-						 sprn->fetch0_active = 0;
+						 //sprn->fetch0_active = 0;
+						 sprn->fetch0_pc = spro->dec0_pc + 1;
+						 sprn->fetch1_active = 0;
 						 sprn->dec0_active = 0;
 					 }
 					 if (jump_predictors[(spro->exec0_pc % 40)] != 0)
@@ -647,21 +648,43 @@ static void sp_ctl(sp_t *sp)
 		case POL:
 			if(spro->exec1_dst >1 && spro->exec1_dst <8)
 			{
-			sprn->r[spro->exec1_dst] = spro->exec1_aluout;
+				sprn->r[spro->exec1_dst] = spro->exec1_aluout;
+
+				// FORWARD: ALU -> ALU
+				if (spro->exec1_dst == spro->dec1_src0 && spro->exec0_dst != spro->dec1_src0)
+				{
+					sprn->exec0_alu0 = spro->exec1_aluout;
+				}
+				// FORWARD: ALU -> ALU
+				if (spro->exec1_dst == spro->dec1_src1 && spro->exec0_dst != spro->dec1_src1)
+				{
+					sprn->exec0_alu1 = spro->exec1_aluout;
+				}
+
 			}
-			// FORWARD: ALU -> ALU
-			if(spro->exec1_dst==spro->dec1_src0) 
+			/*if (spro->exec0_dst > 1 && spro->exec0_dst < 8)
 			{
-				sprn->exec0_alu0 = spro->exec1_aluout;
-			}
-			// FORWARD: ALU -> ALU
-			if(spro->exec1_dst==spro->dec1_src1) 
-			{
-				sprn->exec0_alu1 = spro->exec1_aluout;
-			}
+				if (spro->exec0_dst == spro->dec1_src0) // forwarding ALU to ALU
+				{
+					sprn->exec0_alu0 = sprn->exec1_aluout;
+					//sp_printf("forwarding ALU to ALU: exec0_alu0 = %d\n", sprn->exec1_aluout);
+				}
+
+
+				if (spro->exec0_dst == spro->dec1_src1) // forwarding ALU to ALU
+				{
+					sprn->exec0_alu1 = sprn->exec1_aluout;
+					//sp_printf("forwarding ALU to ALU: exec0_alu1 = %d\n", sprn->exec1_aluout);
+				}
+			}*/
 			break;
 		default:
 		 	break;
+		}
+
+		if (nr_simulated_instructions == 57)
+		{
+			sp_printf("\n\n\n\n---------------------------- HERE -----------------------------\n\n\n\n");
 		}
 
 		// Printing inst trace
