@@ -597,16 +597,20 @@ static void sp_ctl(sp_t *sp)
 			if(spro->exec1_dst > 1 && spro->exec1_dst < 8)
 			{
 				sprn->r[spro->exec1_dst] = data_extracted;
+				//when we forward we need to check that we're not overwriting a forward from exec0->dec1 which is the right one
 				// FORWARD: LD -> ALU
-				if (spro->exec1_dst == spro->dec1_src0 && spro->dec1_opcode != ST)
+				if (spro->exec1_dst == spro->dec1_src0)// && spro->dec1_opcode != ST)
 				{
 					sprn->exec0_alu0 = data_extracted;
+					sprn->exec1_active = 0;
 					//sp_printf("forwarding LD to ALU: exec0_alu0 = %d\n", data_extracted);
 				}
 				// FORWARD: LD -> ALU
-				if (spro->exec1_dst == spro->dec1_src1 && spro->dec1_opcode != ST)
+				
+				if (spro->exec1_dst == spro->dec1_src1)// && spro->dec1_opcode != ST)
 				{
 					sprn->exec0_alu1 = data_extracted;
+					sprn->exec1_active = 0;
 					//sp_printf("forwarding LD to ALU: exec0_alu0 = %d\n", data_extracted);
 				}
 			}
