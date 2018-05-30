@@ -633,7 +633,10 @@ static void sp_ctl(sp_t *sp)
 				if (spro->exec1_dst == spro->dec1_src0)// && spro->exec0_dst != spro->dec1_src0)
 				{
 					sprn->exec0_alu0 = data_extracted;
-					sprn->exec1_active = 0;
+					if (spro->exec0_pc == spro->exec1_pc)
+					{
+						sprn->exec1_active = 0; 
+					}
 					//sp_printf("forwarding LD to ALU: exec0_alu0 = %d\n", data_extracted);// || spro->exec1_pc == spro->exec0_pc)
 				}
 				// FORWARD: LD -> ALU
@@ -641,7 +644,10 @@ static void sp_ctl(sp_t *sp)
 				if (spro->exec1_dst == spro->dec1_src1)// && spro->exec0_dst != spro->dec1_src1)
 				{
 					sprn->exec0_alu1 = data_extracted;
-					sprn->exec1_active = 0;
+					if (spro->exec0_pc == spro->exec1_pc)
+					{
+						sprn->exec1_active = 0;
+					}
 					//sp_printf("forwarding LD to ALU: exec0_alu0 = %d\n", data_extracted);
 				}
 
