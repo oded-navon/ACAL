@@ -143,7 +143,7 @@ int jump_predictors[40];
 
 static char opcode_name[32][4] = {"ADD", "SUB", "LSF", "RSF", "AND", "OR", "XOR", "LHI",
 				 "LD", "ST", "U", "U", "U", "U", "U", "U",
-				 "JLT", "JLE", "JEQ", "JNE", "JIN", "U", "U", "U",
+				 "JLT", "JLE", "JEQ", "JNE", "JIN", "DMA", "POL", "U",
 				 "HLT", "U", "U", "U", "U", "U", "U", "U"};
 
 static void dump_sram(sp_t *sp, char *name, llsim_memory_t *sram)
@@ -357,11 +357,7 @@ static void sp_ctl(sp_t *sp)
 	// dec1
 	sprn->exec0_active = 0;
 	if (spro->dec1_active) {
-		if (spro->dec1_opcode == DMA && !dma_opcode_received && validate_dma_values(spro->r[spro->dec1_dst], spro->r[spro->dec1_src0], spro->dec1_immediate)) //in case DMA is already working, we ignore the new request
-		{
-			init_dma_logic(spro->r[spro->dec1_dst], spro->r[spro->dec1_src0], spro->dec1_immediate);
-		}
-		else if (raw_hazard == 0 || (spro->dec1_opcode == LD))
+		if (raw_hazard == 0 || (spro->dec1_opcode == LD))
 		{
 			if (spro->dec1_src0 == 1)
 			{
@@ -381,6 +377,12 @@ static void sp_ctl(sp_t *sp)
 			{
 				sprn->exec0_alu1 = (spro->dec1_src1) ? spro->r[spro->dec1_src1] : R0;
 			}
+
+			if (spro->dec1_opcode == DMA)
+			{
+				sprn->exec0_alu1 = (spro->dec1_dst) ? spro->r[spro->dec1_dst] : R0;
+			}
+
 			sprn->exec0_pc = spro->dec1_pc;
 			sprn->exec0_inst = spro->dec1_inst;
 			sprn->exec0_opcode = spro->dec1_opcode;
@@ -395,94 +397,100 @@ static void sp_ctl(sp_t *sp)
 	// exec0
 	sprn->exec1_active = 0;	  //TODO make sure handles polling also. same as ex2.
 	if (spro->exec0_active) {
-		sprn->branch_taken = 0;
-		switch (spro->exec0_opcode)
+		if (spro->exec0_opcode == DMA && !dma_opcode_received && validate_dma_values(spro->exec0_alu1, spro->exec0_alu0, spro->exec0_immediate)) //in case DMA is already working, we ignore the new request
 		{
-		case ADD:
-			sprn->exec1_aluout = spro->exec0_alu0 + spro->exec0_alu1;
-			break;
-
-		case SUB:
-			sprn->exec1_aluout = spro->exec0_alu0 - spro->exec0_alu1;
-			break;
-
-		case LSF:
-			sprn->exec1_aluout = spro->exec0_alu0 << spro->exec0_alu1;
-			//sp_printf("In exec0, exec1_aluout = %d, exec0_alu0 = %d, exec0_alu1 = %d\n", sprn->exec1_aluout, spro->exec0_alu0, spro->exec0_alu1);
-			break;
-
-		case RSF:
-			sprn->exec1_aluout = spro->exec0_alu0 >> spro->exec0_alu1;
-			break;
-
-		case AND:
-			sprn->exec1_aluout = spro->exec0_alu0 & spro->exec0_alu1;
-			break;
-
-		case OR:
-			sprn->exec1_aluout = spro->exec0_alu0 | spro->exec0_alu1;
-			break;
-
-		case XOR:
-			sprn->exec1_aluout = spro->exec0_alu0 ^ spro->exec0_alu1;
-			break;
-
-		case LHI:
-			// we need to only load the imm into the high bits of dst 
-			// and not override the lower bits of dst, so we use AND
-			if (spro->exec0_dst > 1)
-			{
-				sprn->exec1_aluout = spro->exec0_alu0 & (spro->exec0_immediate) << 16;
-			}
-			break;
-
-		case LD:
-			mem_available = false;
-			if (spro->exec0_alu1 < SP_SRAM_HEIGHT)
-			{
-				llsim_mem_read(sp->sramd, spro->exec0_alu1);
-			}
-			break;
-
-		case ST:
-			mem_available = false;			
-			llsim_mem_set_datain(sp->sramd, spro->exec0_alu0, 31, 0);
-			llsim_mem_write(sp->sramd, spro->exec0_alu1);
-			break;
-
-		case JLT:
-			sprn->exec1_aluout = spro->exec0_alu0 < spro->exec0_alu1;
-			break;
-
-		case JLE:
-			sprn->exec1_aluout = spro->exec0_alu0 <= spro->exec0_alu1;
-			break;
-
-		case JEQ:
-			sprn->exec1_aluout = spro->exec0_alu0 == spro->exec0_alu1;
-			//sp_printf("In exec0, exec1_aluout = %d, exec0_alu0 = %d, exec0_alu1 = %d\n", sprn->exec1_aluout, spro->exec0_alu0, spro->exec0_alu1);
-			break;
-
-		case JNE:
-			sprn->exec1_aluout = spro->exec0_alu0 != spro->exec0_alu1;
-			break;
-
-		case JIN:
-			//Check edge case: the address we need to jump to is bigger than the memory
-			if (spro->exec0_alu0 < SP_SRAM_HEIGHT)
-			{
-				sprn->exec1_aluout = 1;
-			}
-			break;
-
-		case HLT:
-			break;
+			init_dma_logic(spro->exec0_alu1, spro->exec0_alu0, spro->exec0_immediate);
 		}
-
-		sp_printf("In exec0, exec1_aluout = %d\n", sprn->exec1_aluout);
-		//checking if we need to forward ALU and checking the branch prediction
-		switch (spro->exec0_opcode)
+		else
 		{
+			sprn->branch_taken = 0;
+			switch (spro->exec0_opcode)
+			{
+			case ADD:
+				sprn->exec1_aluout = spro->exec0_alu0 + spro->exec0_alu1;
+				break;
+
+			case SUB:
+				sprn->exec1_aluout = spro->exec0_alu0 - spro->exec0_alu1;
+				break;
+
+			case LSF:
+				sprn->exec1_aluout = spro->exec0_alu0 << spro->exec0_alu1;
+				//sp_printf("In exec0, exec1_aluout = %d, exec0_alu0 = %d, exec0_alu1 = %d\n", sprn->exec1_aluout, spro->exec0_alu0, spro->exec0_alu1);
+				break;
+
+			case RSF:
+				sprn->exec1_aluout = spro->exec0_alu0 >> spro->exec0_alu1;
+				break;
+
+			case AND:
+				sprn->exec1_aluout = spro->exec0_alu0 & spro->exec0_alu1;
+				break;
+
+			case OR:
+				sprn->exec1_aluout = spro->exec0_alu0 | spro->exec0_alu1;
+				break;
+
+			case XOR:
+				sprn->exec1_aluout = spro->exec0_alu0 ^ spro->exec0_alu1;
+				break;
+
+			case LHI:
+				// we need to only load the imm into the high bits of dst 
+				// and not override the lower bits of dst, so we use AND
+				if (spro->exec0_dst > 1)
+				{
+					sprn->exec1_aluout = spro->exec0_alu0 & (spro->exec0_immediate) << 16;
+				}
+				break;
+
+			case LD:
+				mem_available = false;
+				if (spro->exec0_alu1 < SP_SRAM_HEIGHT)
+				{
+					llsim_mem_read(sp->sramd, spro->exec0_alu1);
+				}
+				break;
+
+			case ST:
+				mem_available = false;
+				llsim_mem_set_datain(sp->sramd, spro->exec0_alu0, 31, 0);
+				llsim_mem_write(sp->sramd, spro->exec0_alu1);
+				break;
+
+			case JLT:
+				sprn->exec1_aluout = spro->exec0_alu0 < spro->exec0_alu1;
+				break;
+
+			case JLE:
+				sprn->exec1_aluout = spro->exec0_alu0 <= spro->exec0_alu1;
+				break;
+
+			case JEQ:
+				sprn->exec1_aluout = spro->exec0_alu0 == spro->exec0_alu1;
+				//sp_printf("In exec0, exec1_aluout = %d, exec0_alu0 = %d, exec0_alu1 = %d\n", sprn->exec1_aluout, spro->exec0_alu0, spro->exec0_alu1);
+				break;
+
+			case JNE:
+				sprn->exec1_aluout = spro->exec0_alu0 != spro->exec0_alu1;
+				break;
+
+			case JIN:
+				//Check edge case: the address we need to jump to is bigger than the memory
+				if (spro->exec0_alu0 < SP_SRAM_HEIGHT)
+				{
+					sprn->exec1_aluout = 1;
+				}
+				break;
+
+			case HLT:
+				break;
+			}
+
+			sp_printf("In exec0, exec1_aluout = %d\n", sprn->exec1_aluout);
+			//checking if we need to forward ALU and checking the branch prediction
+			switch (spro->exec0_opcode)
+			{
 			case ADD:
 			case SUB:
 			case LSF:
@@ -492,99 +500,113 @@ static void sp_ctl(sp_t *sp)
 			case XOR:
 			case LHI:
 				// Forwarding
-				if(spro->exec0_dst > 1 && spro->exec0_dst < 8)
+				if (spro->exec0_dst > 1 && spro->exec0_dst < 8)
+				{
+					if (spro->exec0_dst == spro->dec1_src0) // forwarding ALU to ALU
 					{
-						if(spro->exec0_dst==spro->dec1_src0) // forwarding ALU to ALU
-						{
-							sprn->exec0_alu0 = sprn->exec1_aluout;
-							//sp_printf("forwarding ALU to ALU: exec0_alu0 = %d\n", sprn->exec1_aluout);
-						}
+						sprn->exec0_alu0 = sprn->exec1_aluout;
+						//sp_printf("forwarding ALU to ALU: exec0_alu0 = %d\n", sprn->exec1_aluout);
+					}
 
-						if(spro->exec0_dst==spro->dec1_src1) // forwarding ALU to ALU
-						{
-							sprn->exec0_alu1 = sprn->exec1_aluout;
-							//sp_printf("forwarding ALU to ALU: exec0_alu1 = %d\n", sprn->exec1_aluout);
-				 		}
-				 	}
-				
+					if (spro->exec0_dst == spro->dec1_src1) // forwarding ALU to ALU
+					{
+						sprn->exec0_alu1 = sprn->exec1_aluout;
+						//sp_printf("forwarding ALU to ALU: exec0_alu1 = %d\n", sprn->exec1_aluout);
+					}
+				}
+				if (spro->dec1_opcode == DMA)
+				{
+					if (spro->exec0_dst == spro->dec1_dst) // forwarding ALU to DMA
+					{
+						sprn->exec0_alu1 = sprn->exec1_aluout;
+						//sp_printf("forwarding ALU to ALU: exec0_alu0 = %d\n", sprn->exec1_aluout);
+					}
+
+					if (spro->exec0_dst == spro->dec1_src0) // forwarding ALU to DMA
+					{
+						sprn->exec0_alu0 = sprn->exec1_aluout;
+						//sp_printf("forwarding ALU to ALU: exec0_alu1 = %d\n", sprn->exec1_aluout);
+					}
+				}
+
 				break;
 			case JLT:
-			 case JLE:
-			 case JEQ:
-			 case JNE:
-				 // If the branch was taken, we need to check if our prediction was right
-				 if(sprn->exec1_aluout == 1)
-				 {
-					 sp_printf("The branch was taken, inst: %d\n",nr_simulated_instructions);
-					 if (spro->fetch1_pc != spro->exec0_immediate)
-					 {
-						 sp_printf("we predicated wrong, flushing\n");
-						 sprn->fetch0_active = 0;
-						 sprn->fetch1_active = 0;
-						 sprn->dec0_active = 0;
-						 sprn->dec1_active = 0;
-						 sprn->exec0_active = 0;
-						 sprn->exec1_active = 1;
-						 //If we had a hazard in the pipeline, it's also flushed
-						 raw_hazard = 0;
-					 }
-					 //If we predicted the branch was taken (right), we need to remove the insts after us, since the prediction is done in dec0
-					 else
-					 {
-						 sp_printf("we were right in the prediction, flushing\n");
-						 sprn->dec1_active = 0;
-						 sprn->exec0_active = 0;
-						 sprn->branch_taken = 1;
+			case JLE:
+			case JEQ:
+			case JNE:
+				// If the branch was taken, we need to check if our prediction was right
+				if (sprn->exec1_aluout == 1)
+				{
+					sp_printf("The branch was taken, inst: %d\n", nr_simulated_instructions);
+					if (spro->fetch1_pc != spro->exec0_immediate)
+					{
+						sp_printf("we predicated wrong, flushing\n");
+						sprn->fetch0_active = 0;
+						sprn->fetch1_active = 0;
+						sprn->dec0_active = 0;
+						sprn->dec1_active = 0;
+						sprn->exec0_active = 0;
+						sprn->exec1_active = 1;
+						//If we had a hazard in the pipeline, it's also flushed
+						raw_hazard = 0;
+					}
+					//If we predicted the branch was taken (right), we need to remove the insts after us, since the prediction is done in dec0
+					else
+					{
+						sp_printf("we were right in the prediction, flushing\n");
+						sprn->dec1_active = 0;
+						sprn->exec0_active = 0;
+						sprn->branch_taken = 1;
 
-					 }
-					 if (jump_predictors[(spro->exec0_pc % 40)] < 2)
-					 {
-						 jump_predictors[(spro->exec0_pc % 40)]++;
-					 }
-				 }
-				 
-				 else //if branch is not taken
-				 {
-					 sp_printf("the branch was not taken\n");
-					 // If we predicted not taken and the branch was indeed not taken, we don't need to do anything
-					 // If we predicted branch taken (wrong), fetch1 pc will be our immediate, and so we flush
-					 if (spro->fetch1_pc == spro->exec0_immediate)
-					 {
-						 sp_printf("we were wrong in the prediction, flushing\n");
-						 //sprn->fetch0_active = 0;
-						 sprn->fetch0_pc = spro->dec0_pc + 1;
-						 sprn->fetch1_active = 0;
-						 sprn->dec0_active = 0;
-					 }
-					 if (jump_predictors[(spro->exec0_pc % 40)] != 0)
-					 {
-						 jump_predictors[(spro->exec0_pc % 40)]--;
-					 }
-				 }
+					}
+					if (jump_predictors[(spro->exec0_pc % 40)] < 2)
+					{
+						jump_predictors[(spro->exec0_pc % 40)]++;
+					}
+				}
 
-				 default:
-					
-				 	break;
-			 }
-			 
-	 	sprn->exec1_pc = spro->exec0_pc;
-		sprn->exec1_inst=spro->exec0_inst;
-		sprn->exec1_opcode = spro->exec0_opcode;
-		sprn->exec1_src0 = spro->exec0_src0;
-		sprn->exec1_src1 = spro->exec0_src1;
-		sprn->exec1_dst = spro->exec0_dst;
-		sprn->exec1_immediate = spro->exec0_immediate;
-		sprn->exec1_alu0 = spro->exec0_alu0;
-		sprn->exec1_alu1 = spro->exec0_alu1;
-		
-		//Turning off the hazard only for ST and LD, after we forwarded
-		if ((spro->dec1_src0 == spro->exec0_dst || spro->dec1_src1 == spro->exec0_dst) && (spro->exec0_opcode == LD || spro->exec0_opcode == ST))
-		{
-			raw_hazard = 0;
+				else //if branch is not taken
+				{
+					sp_printf("the branch was not taken\n");
+					// If we predicted not taken and the branch was indeed not taken, we don't need to do anything
+					// If we predicted branch taken (wrong), fetch1 pc will be our immediate, and so we flush
+					if (spro->fetch1_pc == spro->exec0_immediate)
+					{
+						sp_printf("we were wrong in the prediction, flushing\n");
+						//sprn->fetch0_active = 0;
+						sprn->fetch0_pc = spro->dec0_pc + 1;
+						sprn->fetch1_active = 0;
+						sprn->dec0_active = 0;
+					}
+					if (jump_predictors[(spro->exec0_pc % 40)] != 0)
+					{
+						jump_predictors[(spro->exec0_pc % 40)]--;
+					}
+				}
+
+			default:
+
+				break;
+			}
+
+			sprn->exec1_pc = spro->exec0_pc;
+			sprn->exec1_inst = spro->exec0_inst;
+			sprn->exec1_opcode = spro->exec0_opcode;
+			sprn->exec1_src0 = spro->exec0_src0;
+			sprn->exec1_src1 = spro->exec0_src1;
+			sprn->exec1_dst = spro->exec0_dst;
+			sprn->exec1_immediate = spro->exec0_immediate;
+			sprn->exec1_alu0 = spro->exec0_alu0;
+			sprn->exec1_alu1 = spro->exec0_alu1;
+
+			//Turning off the hazard only for ST and LD, after we forwarded
+			if ((spro->dec1_src0 == spro->exec0_dst || spro->dec1_src1 == spro->exec0_dst) && (spro->exec0_opcode == LD || spro->exec0_opcode == ST))
+			{
+				raw_hazard = 0;
+			}
+
+
 		}
-
-				 
-		
 		sprn->exec1_active = 1;
 	}
 
