@@ -186,6 +186,7 @@ typedef enum {
 	inst_params_opcode_shift = 25     // 00111110000000000000000000000000
 }inst_params_shift;
 
+bool mem_available = true;
 int data_extracted = 0;
 int raw_hazard = 0;
 int pc_of_last_inst_executed = -1;
@@ -215,17 +216,19 @@ static void sp_ctl(sp_t *sp)
 	for (i = 2; i <= 7; i++)
 		fprintf(cycle_trace_fp, "r%d %08x\n", i, spro->r[i]);
 
-	fprintf(cycle_trace_fp, "---fetch0_active %08x\n", spro->fetch0_active);
+	fprintf(cycle_trace_fp, "raw_hazard %08x\n", raw_hazard);
+	
+	fprintf(cycle_trace_fp, "fetch0_active %08x\n", spro->fetch0_active);
 	fprintf(cycle_trace_fp, "fetch0_pc %08x\n", spro->fetch0_pc);
 
-	fprintf(cycle_trace_fp, "---fetch1_active %08x\n", spro->fetch1_active);
+	fprintf(cycle_trace_fp, "fetch1_active %08x\n", spro->fetch1_active);
 	fprintf(cycle_trace_fp, "fetch1_pc %08x\n", spro->fetch1_pc);
 
-	fprintf(cycle_trace_fp, "---dec0_active %08x\n", spro->dec0_active);
+	fprintf(cycle_trace_fp, "dec0_active %08x\n", spro->dec0_active);
 	fprintf(cycle_trace_fp, "dec0_pc %08x\n", spro->dec0_pc);
 	fprintf(cycle_trace_fp, "dec0_inst %08x\n", spro->dec0_inst); // 32 bits
 
-	fprintf(cycle_trace_fp, "---dec1_active %08x\n", spro->dec1_active);
+	fprintf(cycle_trace_fp, "dec1_active %08x\n", spro->dec1_active);
 	fprintf(cycle_trace_fp, "dec1_pc %08x\n", spro->dec1_pc); // 16 bits
 	fprintf(cycle_trace_fp, "dec1_inst %08x\n", spro->dec1_inst); // 32 bits
 	fprintf(cycle_trace_fp, "dec1_opcode %08x\n", spro->dec1_opcode); // 5 bits
@@ -234,7 +237,7 @@ static void sp_ctl(sp_t *sp)
 	fprintf(cycle_trace_fp, "dec1_dst %08x\n", spro->dec1_dst); // 3 bits
 	fprintf(cycle_trace_fp, "dec1_immediate %08x\n", spro->dec1_immediate); // 32 bits
 
-	fprintf(cycle_trace_fp, "---exec0_active %08x\n", spro->exec0_active);
+	fprintf(cycle_trace_fp, "exec0_active %08x\n", spro->exec0_active);
 	fprintf(cycle_trace_fp, "exec0_pc %08x\n", spro->exec0_pc); // 16 bits
 	fprintf(cycle_trace_fp, "exec0_inst %08x\n", spro->exec0_inst); // 32 bits
 	fprintf(cycle_trace_fp, "exec0_opcode %08x\n", spro->exec0_opcode); // 5 bits
@@ -245,7 +248,7 @@ static void sp_ctl(sp_t *sp)
 	fprintf(cycle_trace_fp, "exec0_alu0 %08x\n", spro->exec0_alu0); // 32 bits
 	fprintf(cycle_trace_fp, "exec0_alu1 %08x\n", spro->exec0_alu1); // 32 bits
 
-	fprintf(cycle_trace_fp, "---exec1_active %08x\n", spro->exec1_active);
+	fprintf(cycle_trace_fp, "exec1_active %08x\n", spro->exec1_active);
 	fprintf(cycle_trace_fp, "exec1_pc %08x\n", spro->exec1_pc); // 16 bits
 	fprintf(cycle_trace_fp, "exec1_inst %08x\n", spro->exec1_inst); // 32 bits
 	fprintf(cycle_trace_fp, "exec1_opcode %08x\n", spro->exec1_opcode); // 5 bits
@@ -256,8 +259,15 @@ static void sp_ctl(sp_t *sp)
 	fprintf(cycle_trace_fp, "exec1_alu0 %08x\n", spro->exec1_alu0); // 32 bits
 	fprintf(cycle_trace_fp, "exec1_alu1 %08x\n", spro->exec1_alu1); // 32 bits
 	fprintf(cycle_trace_fp, "exec1_aluout %08x\n", spro->exec1_aluout);
-	fprintf(cycle_trace_fp, "branch_taken %08x\n", spro->branch_taken);
-	fprintf(cycle_trace_fp, "raw_hazard %08x\n", raw_hazard);
+
+	fprintf(cycle_trace_fp, "mem_available %08x\n", mem_available);
+	fprintf(cycle_trace_fp, "ctl_dma_state %08x\n", ctl_dma_state);
+	fprintf(cycle_trace_fp, "dma_opcode_received %08x\n", dma_opcode_received);
+	fprintf(cycle_trace_fp, "dma_regs[0] %08x\n", dma_regs[0]);
+	fprintf(cycle_trace_fp, "dma_regs[1] %08x\n", dma_regs[1]);
+	fprintf(cycle_trace_fp, "dma_regs[2] %08x\n", dma_regs[2]);
+	fprintf(cycle_trace_fp, "dma_regs[3] %08x\n", dma_regs[3]);
+	fprintf(cycle_trace_fp, "dma_regs[4] %08x\n", dma_regs[4]);
 
 	fprintf(cycle_trace_fp, "\n\n\n");
 
@@ -274,7 +284,7 @@ static void sp_ctl(sp_t *sp)
 	if (sp->start)
 		sprn->fetch0_active = 1;
 
-	bool mem_available = true;
+	mem_available = true;
 	// fetch0
 	sprn->fetch1_active = 0;
 	if (spro->fetch0_active) {
@@ -395,9 +405,10 @@ static void sp_ctl(sp_t *sp)
 	}
 
 	// exec0
-	sprn->exec1_active = 0;	  //TODO make sure handles polling also. same as ex2.
+	sprn->exec1_active = 0;	
 	if (spro->exec0_active) {
-		if (spro->exec0_opcode == DMA && !dma_opcode_received && validate_dma_values(spro->exec0_alu1, spro->exec0_alu0, spro->exec0_immediate)) //in case DMA is already working, we ignore the new request
+		//in case DMA is already working, we ignore the new request
+		if (spro->exec0_opcode == DMA && !dma_opcode_received && validate_dma_values(spro->exec0_alu1, spro->exec0_alu0, spro->exec0_immediate)) 
 		{
 			init_dma_logic(spro->exec0_alu1, spro->exec0_alu0, spro->exec0_immediate);
 		}
@@ -482,12 +493,15 @@ static void sp_ctl(sp_t *sp)
 					sprn->exec1_aluout = 1;
 				}
 				break;
+			case POL:
+				sprn->exec1_aluout = !dma_opcode_received;
+				break;
 
 			case HLT:
 				break;
 			}
 
-			sp_printf("In exec0, exec1_aluout = %d\n", sprn->exec1_aluout);
+			//sp_printf("In exec0, exec1_aluout = %d\n", sprn->exec1_aluout);
 			//checking if we need to forward ALU and checking the branch prediction
 			switch (spro->exec0_opcode)
 			{
@@ -519,13 +533,7 @@ static void sp_ctl(sp_t *sp)
 					if (spro->exec0_dst == spro->dec1_dst) // forwarding ALU to DMA
 					{
 						sprn->exec0_alu1 = sprn->exec1_aluout;
-						//sp_printf("forwarding ALU to ALU: exec0_alu0 = %d\n", sprn->exec1_aluout);
-					}
-
-					if (spro->exec0_dst == spro->dec1_src0) // forwarding ALU to DMA
-					{
-						sprn->exec0_alu0 = sprn->exec1_aluout;
-						//sp_printf("forwarding ALU to ALU: exec0_alu1 = %d\n", sprn->exec1_aluout);
+						sp_printf("forwarding ALU to DMA from exec0: exec0_alu1 = %d\n", sprn->exec1_aluout);
 					}
 				}
 
@@ -585,19 +593,8 @@ static void sp_ctl(sp_t *sp)
 				}
 
 			default:
-
 				break;
 			}
-
-			sprn->exec1_pc = spro->exec0_pc;
-			sprn->exec1_inst = spro->exec0_inst;
-			sprn->exec1_opcode = spro->exec0_opcode;
-			sprn->exec1_src0 = spro->exec0_src0;
-			sprn->exec1_src1 = spro->exec0_src1;
-			sprn->exec1_dst = spro->exec0_dst;
-			sprn->exec1_immediate = spro->exec0_immediate;
-			sprn->exec1_alu0 = spro->exec0_alu0;
-			sprn->exec1_alu1 = spro->exec0_alu1;
 
 			//Turning off the hazard only for ST and LD, after we forwarded
 			if ((spro->dec1_src0 == spro->exec0_dst || spro->dec1_src1 == spro->exec0_dst) && (spro->exec0_opcode == LD || spro->exec0_opcode == ST))
@@ -607,6 +604,17 @@ static void sp_ctl(sp_t *sp)
 
 
 		}
+
+		sprn->exec1_pc = spro->exec0_pc;
+		sprn->exec1_inst = spro->exec0_inst;
+		sprn->exec1_opcode = spro->exec0_opcode;
+		sprn->exec1_src0 = spro->exec0_src0;
+		sprn->exec1_src1 = spro->exec0_src1;
+		sprn->exec1_dst = spro->exec0_dst;
+		sprn->exec1_immediate = spro->exec0_immediate;
+		sprn->exec1_alu0 = spro->exec0_alu0;
+		sprn->exec1_alu1 = spro->exec0_alu1;
+
 		sprn->exec1_active = 1;
 	}
 
@@ -616,25 +624,34 @@ static void sp_ctl(sp_t *sp)
 		switch(spro->exec1_opcode)
 		{
 		case LD:
+			//mem_available = false;
 			data_extracted = llsim_mem_extract_dataout(sp->sramd, 31, 0);		
 			if(spro->exec1_dst > 1 && spro->exec1_dst < 8)
 			{
 				sprn->r[spro->exec1_dst] = data_extracted;
-				//when we forward we need to check that we're not overwriting a forward from exec0->dec1 which is the right one
 				// FORWARD: LD -> ALU
-				if (spro->exec1_dst == spro->dec1_src0)// && spro->dec1_opcode != ST)
+				if (spro->exec1_dst == spro->dec1_src0)// && spro->exec0_dst != spro->dec1_src0)
 				{
 					sprn->exec0_alu0 = data_extracted;
 					sprn->exec1_active = 0;
-					//sp_printf("forwarding LD to ALU: exec0_alu0 = %d\n", data_extracted);
+					//sp_printf("forwarding LD to ALU: exec0_alu0 = %d\n", data_extracted);// || spro->exec1_pc == spro->exec0_pc)
 				}
 				// FORWARD: LD -> ALU
 				
-				if (spro->exec1_dst == spro->dec1_src1)// && spro->dec1_opcode != ST)
+				if (spro->exec1_dst == spro->dec1_src1)// && spro->exec0_dst != spro->dec1_src1)
 				{
 					sprn->exec0_alu1 = data_extracted;
 					sprn->exec1_active = 0;
 					//sp_printf("forwarding LD to ALU: exec0_alu0 = %d\n", data_extracted);
+				}
+
+				if (spro->dec1_opcode == DMA)
+				{
+					if (spro->exec1_dst == spro->dec1_dst) // forwarding ALU to DMA
+					{
+						sprn->exec0_alu1 = spro->exec1_aluout;
+						sp_printf("forwarding LD to DMA from exec1: exec0_alu1 = %d\n", sprn->exec1_aluout);
+					}
 				}
 			}
 	 		break;
@@ -667,44 +684,39 @@ static void sp_ctl(sp_t *sp)
 		case OR:
 		case XOR:
 		case LHI:
-		case POL:
+		
 			if(spro->exec1_dst >1 && spro->exec1_dst <8)
 			{
 				sprn->r[spro->exec1_dst] = spro->exec1_aluout;
-
+				
 				// FORWARD: ALU -> ALU
-				if (spro->exec1_dst == spro->dec1_src0 && spro->exec0_dst != spro->dec1_src0)
+				if (spro->exec1_dst == spro->dec1_src0 && spro->exec0_dst != spro->dec1_src0 )
 				{
 					sprn->exec0_alu0 = spro->exec1_aluout;
 				}
 				// FORWARD: ALU -> ALU
-				if (spro->exec1_dst == spro->dec1_src1 && spro->exec0_dst != spro->dec1_src1)
+				if (spro->exec1_dst == spro->dec1_src1 && spro->exec0_dst != spro->dec1_src1 )
 				{
 					sprn->exec0_alu1 = spro->exec1_aluout;
 				}
-
+				if (spro->dec1_opcode == DMA)
+				{
+					if (spro->exec1_dst == spro->dec1_dst) // forwarding ALU to DMA
+					{
+						sprn->exec0_alu1 = spro->exec1_aluout;
+						sp_printf("forwarding ALU to DMA from exec1: exec0_alu1 = %d\n", sprn->exec1_aluout);
+					}
+				}
 			}
-			/*if (spro->exec0_dst > 1 && spro->exec0_dst < 8)
-			{
-				if (spro->exec0_dst == spro->dec1_src0) // forwarding ALU to ALU
-				{
-					sprn->exec0_alu0 = sprn->exec1_aluout;
-					//sp_printf("forwarding ALU to ALU: exec0_alu0 = %d\n", sprn->exec1_aluout);
-				}
-
-
-				if (spro->exec0_dst == spro->dec1_src1) // forwarding ALU to ALU
-				{
-					sprn->exec0_alu1 = sprn->exec1_aluout;
-					//sp_printf("forwarding ALU to ALU: exec0_alu1 = %d\n", sprn->exec1_aluout);
-				}
-			}*/
+			break;
+		case POL:
+			sprn->r[spro->exec1_dst] = spro->exec1_aluout;
 			break;
 		default:
 		 	break;
 		}
 
-		if (nr_simulated_instructions == 57)
+		if (nr_simulated_instructions == 47)
 		{
 			sp_printf("\n\n\n\n---------------------------- HERE -----------------------------\n\n\n\n");
 		}
@@ -732,11 +744,12 @@ static void sp_ctl(sp_t *sp)
 			dump_sram(sp, "sramd_out.txt", sp->sramd);
 		}
 
-		if (dma_opcode_received)
-		{
-			//llsim_printf("dma received\n");
-			perform_dma_logic(mem_available, sp);
-		}
+	}
+
+	if (dma_opcode_received)
+	{
+		//llsim_printf("dma received\n");
+		perform_dma_logic(mem_available, sp);
 	}
 }
 
@@ -1024,6 +1037,22 @@ int print_line5(FILE* file, sp_t* sp)
 			check_ret = sprintf(line_to_print,
 				">>>> EXEC: HALT at PC %04x <<<<\n",
 				sp->spro->exec1_pc
+			);
+			break;
+		case DMA:
+			check_ret = sprintf(line_to_print,
+				">>>> EXEC: %s %d, %d, %d <<<<\n\n",
+				opcode_name[sp->spro->exec1_opcode],
+				sp->spro->exec1_alu1,
+				sp->spro->exec1_alu0,
+				sp->spro->exec1_immediate
+			);
+			break;
+		case POL:
+			check_ret = sprintf(line_to_print,
+				">>>> EXEC: %s %d <<<<\n\n",
+				opcode_name[sp->spro->exec1_opcode],
+				sp->spro->exec1_dst
 			);
 			break;
 		default:
